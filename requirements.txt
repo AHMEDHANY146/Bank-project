@@ -1,2 +1,7 @@
-flask
+streamlit
+plotly
+pandas
+matplotlib
+seaborn
+Pillow
 google-generativeai
