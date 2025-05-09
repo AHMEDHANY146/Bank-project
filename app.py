@@ -11,7 +11,7 @@ import google.generativeai as genai
 # Import Data from CSV or Excel File
 
 try:
-    DF = pd.read_csv(r"heart_attack_dataset.csv")
+    DF = pd.read_csv("heart_attack_dataset.csv")
    # DF = pd.read_csv(r"F:\DataSetsSamples\HeartAttackData\heart_attack_dataset.csv")
 except Exception as ex: 
     print(ex)
