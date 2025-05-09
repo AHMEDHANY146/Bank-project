@@ -11,7 +11,7 @@ import google.generativeai as genai
 # Import Data from CSV or Excel File
 
 try:
-    DF = pd.read_csv(r"D:\datacamp\heart_attack_dataset.csv")
+    DF = pd.read_csv(r"heart_attack_dataset.csv")
    # DF = pd.read_csv(r"F:\DataSetsSamples\HeartAttackData\heart_attack_dataset.csv")
 except Exception as ex: 
     print(ex)
@@ -457,7 +457,7 @@ fig = px.bar(
 fig.update_layout(width=1000, height=600)
 # **************************************************************************************************************
 # Open the image file
-image = Image.open("D:\datacamp\ha.jpg")  # Or use a path like 'assets/image.jpg'
+image = Image.open("ha.jpg")  # Or use a path like 'assets/image.jpg'
 # Display the image
 st.image(image, use_column_width=True)
 st.title("Conclusion")
