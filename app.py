@@ -190,7 +190,7 @@ with tab1:
     st.metric("Churn Risk Percentage", f"{round(churn_risk_percentage, 2)}%")
 
     
-    # get transactions with customer info
+    
     merged_tx = transactions.merge(
         accounts[['AccountID', 'CustomerID']], 
         on='AccountID', 
@@ -387,7 +387,7 @@ with tab2:
     account_type_counts.columns = ['AccountType', 'Count']
 
     total_balance_by_type = accounts.groupby('AccountType')['Balance'].sum().reset_index()
-    # حساب النسبة المئوية لإجمالي الرصيد لكل نوع حساب
+    
     total_balance_by_type['Percentage'] = (total_balance_by_type['Balance'] / total_balance_by_type['Balance'].sum()) * 100
 
     col1, col2 = st.columns(2)
