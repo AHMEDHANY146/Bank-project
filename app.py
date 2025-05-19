@@ -27,13 +27,13 @@ st.title("\U0001F4CA Banking Analytics Dashboard")
 
 @st.cache_data
 def load_data():
-    customers = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset_Updated2.csv")
-    accounts = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset.xlsx - Accounts.csv")
-    cards = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset.xlsx - Cards.csv")
-    loans = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset.xlsx - Loans.csv")
-    calls = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
-    transactions = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Transactions_Updated.csv")
-    fraud_df = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Transactions_WithFraud.csv")
+    customers = pd.read_csv("Banking_Analytics_Dataset_Updated2.csv")
+    accounts = pd.read_csv("Banking_Analytics_Dataset.xlsx - Accounts.csv")
+    cards = pd.read_csv("Banking_Analytics_Dataset.xlsx - Cards.csv")
+    loans = pd.read_csv("Banking_Analytics_Dataset.xlsx - Loans.csv")
+    calls = pd.read_csv("Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
+    transactions = pd.read_csv("Banking_Analytics_Transactions_Updated.csv")
+    fraud_df = pd.read_csv("Banking_Analytics_Transactions_WithFraud.csv")
 
     return customers, accounts, cards, loans, calls, transactions, fraud_df
 
