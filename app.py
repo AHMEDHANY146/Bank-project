@@ -16,8 +16,13 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 import google.generativeai as genai
 import difflib
-from ydata_profiling import ProfileReport
-from streamlit_ydata_profiling import st_profile_report
+from pandas_profiling import ProfileReport
+import streamlit.components.v1 as components
+
+# عرض تقرير التحليل
+def st_profile_report(report, height=None):
+    report_html = report.to_html()
+    components.html(report_html, height=height or 1000, scrolling=True)
 
 
 
