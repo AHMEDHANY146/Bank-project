@@ -16,13 +16,8 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 import google.generativeai as genai
 import difflib
-from pandas_profiling import ProfileReport
-import streamlit.components.v1 as components
-
-# عرض تقرير التحليل
-def st_profile_report(report, height=None):
-    report_html = report.to_html()
-    components.html(report_html, height=height or 1000, scrolling=True)
+from ydata_profiling import ProfileReport
+from streamlit_ydata_profiling import st_profile_report
 
 
 
@@ -32,13 +27,13 @@ st.title("\U0001F4CA Banking Analytics Dashboard")
 
 @st.cache_data
 def load_data():
-    customers = pd.read_csv("Banking_Analytics_Dataset_Updated2.csv")
-    accounts = pd.read_csv("Banking_Analytics_Dataset.xlsx - Accounts.csv")
-    cards = pd.read_csv("Banking_Analytics_Dataset.xlsx - Cards.csv")
-    loans = pd.read_csv("Banking_Analytics_Dataset.xlsx - Loans.csv")
-    calls = pd.read_csv("Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
-    transactions = pd.read_csv("Banking_Analytics_Transactions_Updated.csv")
-    fraud_df = pd.read_csv("Banking_Analytics_Transactions_WithFraud.csv")
+    customers = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset_Updated2.csv")
+    accounts = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset.xlsx - Accounts.csv")
+    cards = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset.xlsx - Cards.csv")
+    loans = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset.xlsx - Loans.csv")
+    calls = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
+    transactions = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Transactions_Updated.csv")
+    fraud_df = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Transactions_WithFraud.csv")
 
     return customers, accounts, cards, loans, calls, transactions, fraud_df
 
