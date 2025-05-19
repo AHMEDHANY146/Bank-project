@@ -7,11 +7,6 @@ plotly==5.18.0
 scipy==1.11.4
 numpy==1.24.3
 urllib3==2.0.7
-pydeck==0.8.0
-shapely==2.0.1
 scikit-learn==1.3.2
 google-generativeai==0.3.1
-ydata-profiling==4.6.2
-streamlit-ydata-profiling==0.1.0
 openpyxl==3.1.2
-geopandas==0.14.1
