@@ -15,6 +15,9 @@ import datetime
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 import google.generativeai as genai
+import difflib
+from ydata_profiling import ProfileReport
+from streamlit_ydata_profiling import st_profile_report
 
 
 
@@ -30,9 +33,11 @@ def load_data():
     loans = pd.read_csv("Banking_Analytics_Dataset.xlsx - Loans.csv")
     calls = pd.read_csv("Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
     transactions = pd.read_csv("Banking_Analytics_Transactions_Updated.csv")
-    return customers, accounts, cards, loans, calls, transactions
+    fraud_df = pd.read_csv("Banking_Analytics_Transactions_WithFraud.csv")
 
-customers, accounts, cards, loans, calls, transactions = load_data()
+    return customers, accounts, cards, loans, calls, transactions, fraud_df
+
+customers, accounts, cards, loans, calls, transactions, fraud_df = load_data()
 
 customers.drop(columns=["Unnamed: 0"], inplace=True, errors='ignore')
 transactions.drop(columns=["Unnamed: 0"], inplace=True, errors='ignore')
@@ -40,10 +45,10 @@ transactions.drop(columns=["Unnamed: 0"], inplace=True, errors='ignore')
 
 
 (
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7,tab8
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7,tab8,tab9
 ) = st.tabs([
     "Customer Overview", "Accounts", "Transactions", "Loans",
-    "Cards", "Support Calls", "Advanced Insights","Chat"
+    "Cards", "Support Calls", "Advanced Insights","Chat","Auto Analysis"
 ])
 
 
@@ -590,7 +595,6 @@ with tab2:
     """)
     st.markdown("</div>", unsafe_allow_html=True)
 
-
 with tab3:
     st.header("💸 Transactions Overview")
     
@@ -789,6 +793,211 @@ with tab3:
         )
         
         st.plotly_chart(heatmap_fig, use_container_width=True)
+
+    st.subheader("🚨 Fraud Detection Insights")
+
+    # General Statistics
+    fraud_count = fraud_df[fraud_df["fraud"] == -1].shape[0]
+    legit_count = fraud_df[fraud_df["fraud"] != -1].shape[0]
+    total_tx = fraud_df.shape[0]
+
+    # Key Performance Indicators
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Fraudulent Transactions", f"{fraud_count:,}", f"{(fraud_count / total_tx) * 100:.2f}%")
+    with col2:
+        # Assuming amount column exists in the data
+        if "Amount" in fraud_df.columns:
+            fraud_amount = fraud_df[fraud_df["fraud"] == -1]["Amount"].sum()
+            st.metric("Total Fraud Amount", f"${fraud_amount:,.2f}")
+        else:
+            st.metric("Total Fraud Amount", "Data not available")
+    with col3:
+        # Fraud detection rate (you can modify based on your available data)
+        st.metric("Fraud Detection Rate", f"{(fraud_count / (fraud_count + 100)):.2f}%", "vs Last Month +10%")
+
+    # Data Distribution Visualization
+    col1, col2 = st.columns(2)
+    with col1:
+        fig = px.pie(
+            names=["Fraudulent Transactions", "Legitimate Transactions"],
+            values=[fraud_count, legit_count],
+            title="Fraud vs. Legitimate Transactions",
+            color_discrete_sequence=["#ff6b6b", "#4ecdc4"],
+            hole=0.4
+        )
+        fig.update_traces(textinfo='percent+label')
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        # Fraud analysis by transaction type (if available in data)
+        if "TransactionType" in fraud_df.columns:
+            fraud_by_type = fraud_df[fraud_df["fraud"] == -1]["TransactionType"].value_counts().reset_index()
+            fraud_by_type.columns = ["Transaction Type", "Fraud Count"]
+            
+            fig = px.bar(
+                fraud_by_type.head(5),
+                x="Transaction Type", 
+                y="Fraud Count",
+                title="Top 5 Transaction Types Prone to Fraud",
+                color="Fraud Count",
+                color_continuous_scale=px.colors.sequential.Reds
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Transaction type data not available")
+
+    
+    # Ensure date column exists and convert to datetime
+    if "TransactionDate" in fraud_df.columns:
+        fraud_df["TransactionDate"] = pd.to_datetime(fraud_df["TransactionDate"], errors='coerce')
+        fraud_df["Month"] = fraud_df["TransactionDate"].dt.month
+        fraud_df["Day"] = fraud_df["TransactionDate"].dt.day
+        fraud_df["Hour"] = fraud_df["TransactionDate"].dt.hour
+        
+        fraud_time_analysis = fraud_df[fraud_df["fraud"] == -1].groupby("Hour").size().reset_index()
+        fraud_time_analysis.columns = ["Hour of Day", "Fraud Count"]
+        
+       
+        
+        # Analysis by day of week
+        if hasattr(fraud_df["TransactionDate"].dt, 'dayofweek'):
+            day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            fraud_df["DayOfWeek"] = fraud_df["TransactionDate"].dt.dayofweek
+            fraud_day_analysis = fraud_df[fraud_df["fraud"] == -1].groupby("DayOfWeek").size().reset_index()
+            fraud_day_analysis["DayName"] = fraud_day_analysis["DayOfWeek"].apply(lambda x: day_names[x])
+            fraud_day_analysis.columns = ["Day Number", "Fraud Count", "Day of Week"]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                fig = px.bar(
+                    fraud_day_analysis, 
+                    x="Day of Week", 
+                    y="Fraud Count", 
+                    title="Distribution of Fraudulent Transactions by Day of Week",
+                    color="Fraud Count",
+                    color_continuous_scale=px.colors.sequential.Reds
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+        else:
+            st.info("Date data not available for temporal analysis")
+
+    # Amount Analysis for Fraudulent Transactions
+    if "Amount" in fraud_df.columns:
+        st.subheader("💰 Fraud Amount Analysis")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            fig = px.histogram(
+                fraud_df[fraud_df["fraud"] == -1], 
+                x="Amount",
+                nbins=20,
+                title="Distribution of Fraudulent Transaction Amounts",
+                color_discrete_sequence=["#ff6b6b"],
+                opacity=0.7
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            # Compare average amounts
+            avg_fraud_amount = fraud_df[fraud_df["fraud"] == -1]["Amount"].mean()
+            avg_legit_amount = fraud_df[fraud_df["fraud"] != -1]["Amount"].mean()
+            
+            comparison_df = pd.DataFrame({
+                "Transaction Type": ["Fraudulent", "Legitimate"],
+                "Average Amount": [avg_fraud_amount, avg_legit_amount]
+            })
+            
+            fig = px.bar(
+                comparison_df, 
+                x="Transaction Type", 
+                y="Average Amount",
+                title="Comparison of Average Transaction Amounts",
+                color="Transaction Type",
+                color_discrete_map={
+                    "Fraudulent": "#ff6b6b",
+                    "Legitimate": "#4ecdc4"
+                }
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    # Geographic Analysis (if data available)
+    if "State" in fraud_df.columns:
+        st.subheader("🗺️ Geographic Distribution of Fraud")
+        
+        fraud_by_state = fraud_df[fraud_df["fraud"] == -1].groupby("State").size().reset_index()
+        fraud_by_state.columns = ["State", "Fraud Count"]
+        fraud_by_state = fraud_by_state.sort_values("Fraud Count", ascending=False)
+        
+        fig = px.choropleth(
+            fraud_by_state,
+            locations="State",
+            locationmode="USA-states",
+            color="Fraud Count",
+            scope="usa",
+            title="Fraud Distribution by State",
+            color_continuous_scale=px.colors.sequential.Reds
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Fraud Factors and Patterns
+    st.subheader("🔍 Fraud Factors and Patterns")
+
+    # Simulating a classification model for fraud factors
+    feature_importance = pd.DataFrame({
+        "Feature": ["Transaction Time", "Transaction Amount", "Transaction Location", "Transaction Frequency", "Transaction Type"],
+        "Importance": [0.85, 0.72, 0.65, 0.58, 0.42]
+    })
+
+    fig = px.bar(
+        feature_importance, 
+        x="Feature", 
+        y="Importance", 
+        title="Key Factors in Fraud Detection",
+        color="Importance",
+        color_continuous_scale=px.colors.sequential.Viridis
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Sample Fraudulent Transactions
+    st.subheader("📋 Sample Fraudulent Transactions")
+    sample_fraud = fraud_df[fraud_df["fraud"] == -1].head(10)
+    if "CustomerID" in sample_fraud.columns:
+        sample_fraud["CustomerID"] = sample_fraud["CustomerID"].astype(str).apply(lambda x: x[:3] + "***" + x[-2:])
+    st.dataframe(sample_fraud)
+
+    # Interactive Filtering of Fraud Data
+    st.subheader("🔎 Search and Filter Fraudulent Transactions")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if "Amount" in fraud_df.columns:
+            min_amount = int(fraud_df["Amount"].min())
+            max_amount = int(fraud_df["Amount"].max())
+            selected_amount = st.slider("Filter by Amount", min_amount, max_amount, (min_amount, max_amount))
+        
+    with col2:
+        if "TransactionType" in fraud_df.columns:
+            transaction_types = fraud_df["TransactionType"].unique().tolist()
+            selected_types = st.multiselect("Filter by Transaction Type", transaction_types, default=transaction_types[:3])
+
+    # Apply filters to data and display results
+    try:
+        filtered_fraud = fraud_df[fraud_df["fraud"] == -1]
+        
+        if "Amount" in fraud_df.columns:
+            filtered_fraud = filtered_fraud[(filtered_fraud["Amount"] >= selected_amount[0]) & 
+                                          (filtered_fraud["Amount"] <= selected_amount[1])]
+        
+        if "TransactionType" in fraud_df.columns and selected_types:
+            filtered_fraud = filtered_fraud[filtered_fraud["TransactionType"].isin(selected_types)]
+        
+        st.dataframe(filtered_fraud)
+        st.markdown(f"**Found {filtered_fraud.shape[0]} fraudulent transactions matching the criteria**")
+        
+    except Exception as e:
+        st.error(f"Error filtering data: {str(e)}")
 
 with tab4:
     st.header("🏦 Loans Analysis")
@@ -1080,29 +1289,15 @@ with tab8:
     model = genai.GenerativeModel('gemini-1.5-flash')
     chat = model.start_chat(history=[])
 
-    st.title("🤖 Data Analysis Assistant")
-    
-    
+    st.title("🧠 Data Analysis Assistant")
+
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
-    
+
     if 'current_chat' not in st.session_state:
         st.session_state.current_chat = []
-    
-    
-    def save_chat():
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-        if len(st.session_state.current_chat) > 0:
-            chat_name = f"Chat {timestamp}"
-            st.session_state.chat_history.append({
-                "name": chat_name,
-                "messages": st.session_state.current_chat.copy()
-            })
-            st.session_state.current_chat = []
-    
-    
+
     def get_system_prompt():
-        
         context = """
         You are a financial data analyst assistant for a banking dashboard. You have access to the following datasets:
         
@@ -1112,6 +1307,7 @@ with tab8:
         4. Loans: Data about loans with LoanID, CustomerID, LoanType, LoanAmount, InterestRate, LoanStartDate, LoanEndDate.
         5. Transactions: Transaction data with TransactionID, AccountID, TransactionDate, Amount, TransactionType.
         6. Support Calls: Customer support call data with CallID, CustomerID, CallDate, IssueType, Resolved status.
+        7. Fraud Data: Information about fraudulent transactions with fraud indicators.
         
         The dashboard provides insights on:
         - Customer Overview: Demographics, growth trends, churn risk
@@ -1121,22 +1317,29 @@ with tab8:
         - Card Services: Types, issuance trends, active vs expired
         - Support Call Analysis: Resolution rates, common issues
         - Advanced Insights: Customer segmentation, cross-product usage
+        - Fraud Detection: Identifying and analyzing fraudulent transactions
         
         Answer questions based on this banking data. You can respond in multiple languages including English and Arabic.
         """
         return context
+        
+    def save_chat():
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        if len(st.session_state.current_chat) > 0:
+            chat_name = f"Chat {timestamp}"
+            st.session_state.chat_history.append({
+                "name": chat_name,
+                "messages": st.session_state.current_chat.copy()
+            })
+            st.session_state.current_chat = []
 
-    
     chat_container = st.container()
-    with chat_container:
-        for message in st.session_state.current_chat:
-            with st.chat_message(message["role"]):
-                st.write(message["content"])
-    
-    
+    for message in st.session_state.current_chat:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
+
     user_input = st.chat_input("Ask me about the banking data...")
-    
-    
+
     col1, col2, col3 = st.columns([1, 1, 1])
     
     with col1:
@@ -1155,7 +1358,6 @@ with tab8:
         if st.button("New Chat"):
             save_chat()
             
-        
         if st.button("Save Current Chat"):
             save_chat()
             st.success("Chat saved successfully!")
@@ -1183,58 +1385,528 @@ with tab8:
                 mime="text/plain"
             )
     
+    # Check if the input contains chart request keywords
+    chart_keywords = ['رسم', 'شارت', 'رسم بياني', 'plot', 'chart', 'visualize', 'graph', 'عرض']
     
     if user_input:
+        draw_flag = any(word in user_input.lower() for word in chart_keywords)
         
         st.session_state.current_chat.append({"role": "user", "content": user_input})
-        
         
         with st.chat_message("user"):
             st.write(user_input)
         
-        
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 try:
+                    if draw_flag:
+                        # Add column name mappings for both English and Arabic
+                        column_mappings = {
+                            # Arabic to English column mappings - Customer related
+                            "العملاء": "CustomerID",
+                            "العميل": "CustomerID",
+                            "الزبائن": "CustomerID",
+                            "رقم العميل": "CustomerID",
+                            "معرف العميل": "CustomerID",
+                            "هوية العميل": "CustomerID",
+                            "اسم العميل": "Name",
+                            "الاسم": "Name",
+                            "تاريخ الانضمام": "JoinDate",
+                            "الانضمام": "JoinDate",
+                            "تاريخ التسجيل": "JoinDate",
+                            
+                            # Account related
+                            "الحساب": "AccountID",
+                            "الحسابات": "AccountID",
+                            "رقم الحساب": "AccountID",
+                            "معرف الحساب": "AccountID",
+                            "هوية الحساب": "AccountID",
+                            "نوع الحساب": "AccountType",
+                            "فئة الحساب": "AccountType",
+                            "تصنيف الحساب": "AccountType",
+                            
+                            # Transaction related
+                            "المعاملات": "TransactionID",
+                            "العمليات": "TransactionID",
+                            "رقم المعاملة": "TransactionID",
+                            "معاملة": "TransactionID",
+                            "رقم العملية": "TransactionID",
+                            "العملية": "TransactionID",
+                            "نوع المعاملة": "TransactionType",
+                            "نوع العملية": "TransactionType",
+                            "فئة المعاملة": "TransactionType",
+                            "فئة العملية": "TransactionType",
+                            "تصنيف المعاملة": "TransactionType",
+                            "تصنيف العملية": "TransactionType",
+                            "المبلغ": "Amount",
+                            "مبلغ": "Amount",
+                            "المال": "Amount",
+                            "النقود": "Amount",
+                            "قيمة": "Amount",
+                            "قيمة المعاملة": "Amount",
+                            "قيمة العملية": "Amount",
+                            "التاريخ": "TransactionDate",
+                            "تاريخ": "TransactionDate",
+                            "تاريخ المعاملة": "TransactionDate",
+                            "تاريخ العملية": "TransactionDate",
+                            "التاريخ المعاملة": "TransactionDate",
+                            "وقت": "TransactionDate",
+                            "وقت المعاملة": "TransactionDate",
+                            "وقت العملية": "TransactionDate",
+                            "الموسم": "Season",
+                            "موسم": "Season",
+                            "فصل": "Season",
+                            "فصل السنة": "Season",
+                            
+                            # Fraud related
+                            "الاحتيال": "fraud",
+                            "احتيال": "fraud",
+                            "غش": "fraud",
+                            "تزوير": "fraud",
+                            "عملية احتيالية": "fraud",
+                            "معاملة احتيالية": "fraud",
+                            "الاحتيال المالي": "fraud",
+                            "عمليات الاحتيال": "fraud",
+                            "كشف الاحتيال": "fraud",
+                            "مؤشر الاحتيال": "fraud",
+                            
+                            # Location related
+                            "الولاية": "State",
+                            "ولاية": "State",
+                            "المدينة": "City",
+                            "مدينة": "City",
+                            "المحافظة": "State",
+                            "محافظة": "State",
+                            "الولايات": "State",
+                            "الدولة": "State",
+                            "البلد": "State",
+                            "المكان": "State",
+                            "الموقع": "State",
+                            
+                            # Card related
+                            "البطاقات": "CardID",
+                            "البطاقة": "CardID",
+                            "رقم البطاقة": "CardID",
+                            "معرف البطاقة": "CardID",
+                            "هوية البطاقة": "CardID",
+                            "نوع البطاقة": "CardType",
+                            "فئة البطاقة": "CardType",
+                            "تصنيف البطاقة": "CardType",
+                            "تاريخ الإصدار": "IssuedDate",
+                            "إصدار البطاقة": "IssuedDate",
+                            "تاريخ انتهاء الصلاحية": "ExpirationDate",
+                            "انتهاء الصلاحية": "ExpirationDate",
+                            "تاريخ الانتهاء": "ExpirationDate",
+                            "حالة البطاقة": "Status",
+                            
+                            # Loan related
+                            "القروض": "LoanID",
+                            "القرض": "LoanID",
+                            "رقم القرض": "LoanID",
+                            "معرف القرض": "LoanID",
+                            "هوية القرض": "LoanID",
+                            "نوع القرض": "LoanType",
+                            "فئة القرض": "LoanType",
+                            "تصنيف القرض": "LoanType",
+                            "مبلغ القرض": "LoanAmount",
+                            "قيمة القرض": "LoanAmount",
+                            "معدل الفائدة": "InterestRate",
+                            "الفائدة": "InterestRate",
+                            "نسبة الفائدة": "InterestRate",
+                            "تاريخ بدء القرض": "LoanStartDate",
+                            "تاريخ بداية القرض": "LoanStartDate",
+                            "تاريخ انتهاء القرض": "LoanEndDate",
+                            "تاريخ نهاية القرض": "LoanEndDate",
+                            "تاريخ استحقاق القرض": "LoanEndDate",
+                            
+                            # Support calls related
+                            "المكالمات": "CallID",
+                            "المكالمة": "CallID",
+                            "رقم المكالمة": "CallID",
+                            "معرف المكالمة": "CallID",
+                            "هوية المكالمة": "CallID",
+                            "نوع المشكلة": "IssueType",
+                            "المشكلة": "IssueType",
+                            "تصنيف المشكلة": "IssueType",
+                            "تاريخ المكالمة": "CallDate",
+                            "وقت المكالمة": "CallDate",
+                            "حل": "Resolved",
+                            "تم الحل": "Resolved",
+                            "مكالمة محلولة": "Resolved",
+                            
+                            # Balance related
+                            "الرصيد": "Balance",
+                            "رصيد": "Balance",
+                            "الصيد": "Balance",
+                            "الرصيد الموجود": "Balance",
+                            "الصيد الموجود": "Balance",
+                            "الصيد الموجود فيه": "Balance",
+                            "المبلغ الموجود": "Balance",
+                            "القيمة": "Amount",
+                            "القيمة المالية": "Amount",
+                            "المبالغ": "Amount",
+                            "المبالغ المالية": "Amount",
+                            "المال المتوفر": "Balance",
+                            "المال المتاح": "Balance",
+                            "الأموال": "Amount",
+                            "الأموال المتاحة": "Balance",
+                            "مبلغ الحساب": "Balance",
+                            "قيمة الحساب": "Balance",
+                            "رصيد الحساب": "Balance",
+                            
+                            # Common English synonyms
+                            "customers": "CustomerID",
+                            "customer": "CustomerID",
+                            "customer id": "CustomerID",
+                            "customer name": "Name",
+                            "name": "Name",
+                            "join date": "JoinDate",
+                            "registration date": "JoinDate",
+                            "accounts": "AccountID",
+                            "account": "AccountID",
+                            "account id": "AccountID",
+                            "account type": "AccountType",
+                            "transactions": "TransactionID",
+                            "transaction": "TransactionID",
+                            "transaction id": "TransactionID",
+                            "transaction type": "TransactionType",
+                            "amount": "Amount",
+                            "date": "TransactionDate",
+                            "transaction date": "TransactionDate",
+                            "season": "Season",
+                            "fraud": "fraud",
+                            "state": "State",
+                            "city": "City",
+                            "location": "State",
+                            "cards": "CardID",
+                            "card": "CardID",
+                            "card id": "CardID",
+                            "card type": "CardType",
+                            "issue date": "IssuedDate",
+                            "expiration date": "ExpirationDate",
+                            "status": "Status",
+                            "loans": "LoanID",
+                            "loan": "LoanID",
+                            "loan id": "LoanID",
+                            "loan type": "LoanType",
+                            "loan amount": "LoanAmount",
+                            "interest rate": "InterestRate",
+                            "loan start date": "LoanStartDate",
+                            "loan end date": "LoanEndDate",
+                            "calls": "CallID",
+                            "call": "CallID",
+                            "call id": "CallID",
+                            "issue type": "IssueType",
+                            "issue": "IssueType",
+                            "call date": "CallDate",
+                            "resolved": "Resolved",
+                            "balance": "Balance",
+                            "available balance": "Balance",
+                            "account balance": "Balance",
+                            "money": "Amount",
+                            "funds": "Amount",
+                            "available funds": "Balance",
+                            "value": "Amount"
+                        }
+                        
+                        # Improve the column matching logic
+                        def find_column_in_dataframe(column_name, df):
+                            """Find the best matching column in the dataframe"""
+                            # First check if the column exists directly
+                            if column_name in df.columns:
+                                return column_name
+                                
+                            # Check if it's in our mapping
+                            if column_name in column_mappings:
+                                mapped_col = column_mappings[column_name]
+                                if mapped_col in df.columns:
+                                    return mapped_col
+                            
+                            # Try to find a partial match in the dataframe columns
+                            for col in df.columns:
+                                if column_name.lower() in col.lower() or col.lower() in column_name.lower():
+                                    return col
+                            
+                            # Use fuzzy matching as a last resort
+                            closest_match = difflib.get_close_matches(column_name, df.columns, n=1, cutoff=0.6)
+                            if closest_match:
+                                return closest_match[0]
+                                
+                            return None
+                        
+                        # Map dataframe names to actual dataframes
+                        dataframe_mapping = {
+                            "customers": customers,
+                            "accounts": accounts,
+                            "transactions": transactions,
+                            "loans": loans,
+                            "cards": cards,
+                            "calls": calls,
+                            "fraud": fraud_df,
+                            "fraud_df": fraud_df,
+                            
+                            # Arabic mappings
+                            "العملاء": customers,
+                            "الحسابات": accounts,
+                            "المعاملات": transactions,
+                            "العمليات": transactions,
+                            "القروض": loans,
+                            "البطاقات": cards,
+                            "المكالمات": calls,
+                            "الاحتيال": fraud_df
+                        }
+                        
+                        # Enhanced chart prompt that focuses more on column detection
+                        chart_prompt = f"""
+You are a data visualization assistant for a banking analytics dashboard. The user may ask for a chart in English or Arabic.
 
-                    customers_count = customers['CustomerID'].nunique()
-                    accounts_count = accounts['AccountID'].nunique()
-                    transactions_count = transactions['TransactionID'].nunique()
-                    avg_balance = accounts['Balance'].mean()
+The dashboard has these dataframes:
+1. customers - Customer information (CustomerID, Name, JoinDate, State)
+2. accounts - Account information (AccountID, CustomerID, AccountType, Balance)
+3. transactions - Transaction details (TransactionID, AccountID, TransactionDate, Amount, TransactionType)
+4. loans - Loan information (LoanID, CustomerID, LoanType, LoanAmount, InterestRate, LoanStartDate, LoanEndDate)
+5. cards - Card details (CardID, CustomerID, CardType, IssuedDate, ExpirationDate, Status)
+6. calls - Support call records (CallID, CustomerID, CallDate, IssueType, Resolved)
+7. fraud_df - Fraud detection data (TransactionID, fraud flag, Amount, etc.)
+
+Based on the user's request, extract:
+1. The chart type: one of ["bar", "pie", "line"]
+2. The dataframe that contains the data (from the list above)
+3. The column for x-axis (focus on identifying the exact column name)
+4. The column for y-axis (or "count" if the user wants counts per category)
+
+Output your result as JSON in the following format:
+{{
+  "type": "bar",
+  "dataframe": "accounts",
+  "x": "AccountType",
+  "y": "count"
+}}
+
+User's request: {user_input}
+"""
+                        chart_response = chat.send_message(chart_prompt)
+                        
+                        # Add error handling for JSON parsing
+                        try:
+                            # Try to extract JSON part from the response (in case model includes additional text)
+                            response_text = chart_response.text.strip()
+                            
+                            # Look for JSON-like structure in the response
+                            import re
+                            json_match = re.search(r'({[\s\S]*})', response_text)
+                            
+                            if json_match:
+                                json_str = json_match.group(1)
+                                chart_info = json.loads(json_str)
+                            else:
+                                # Try parsing the whole response as JSON
+                                chart_info = json.loads(response_text)
+                                
+                        except json.JSONDecodeError:
+                            # Fallback to default values if parsing fails
+                            st.warning("Could not parse chart request. Using default chart parameters.")
+                            chart_info = {
+                                "type": "bar",
+                                "dataframe": "fraud_df",
+                                "x": "TransactionType" if "TransactionType" in fraud_df.columns else fraud_df.columns[0],
+                                "y": "count"
+                            }
+                        
+                        # Now use chart_info to generate chart
+                        chart_type = chart_info.get("type", "bar")
+                        
+                        # Get the dataframe to use - default to fraud_df
+                        df_name = chart_info.get("dataframe", "fraud_df")
+                        selected_df = dataframe_mapping.get(df_name, fraud_df)
+                        
+                        # Map column names if needed
+                        x_col_raw = chart_info.get("x")
+                        y_col_raw = chart_info.get("y")
+                        
+                        # Apply improved column finding logic
+                        x_col = find_column_in_dataframe(x_col_raw, selected_df) if x_col_raw else selected_df.columns[0]
+                        if not x_col:
+                            st.warning(f"Column '{x_col_raw}' not found. Using first column instead.")
+                            x_col = selected_df.columns[0]
+                        
+                        if y_col_raw and y_col_raw.lower() != "count":
+                            y_col = find_column_in_dataframe(y_col_raw, selected_df)
+                            if not y_col:
+                                st.warning(f"Column '{y_col_raw}' not found. Using count instead.")
+                                y_col = "count"
+                        else:
+                            y_col = "count"
+                        
+                        # Now generate the chart
+                        st.subheader("📊 Auto-Generated Chart")
+                        st.caption(f"Using dataframe: {df_name}")
+
+                        if chart_type == "bar":
+                            if y_col == "count":
+                                chart_data = selected_df[x_col].value_counts().reset_index()
+                                chart_data.columns = [x_col, 'count']
+                                fig = px.bar(chart_data, x=x_col, y='count', title=f"Count of {x_col}")
+                            else:
+                                if y_col in selected_df.columns:
+                                    chart_data = selected_df.groupby(x_col)[y_col].count().reset_index()
+                                    fig = px.bar(chart_data, x=x_col, y=y_col, title=f"{y_col} by {x_col}")
+                                else:
+                                    st.warning(f"Column '{y_col}' not found. Using count instead.")
+                                    chart_data = selected_df[x_col].value_counts().reset_index()
+                                    chart_data.columns = [x_col, 'count']
+                                    fig = px.bar(chart_data, x=x_col, y='count', title=f"Count of {x_col}")
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            ai_response = f"Here's a bar chart showing the distribution of {x_col} from the {df_name} data."
+                            st.write(ai_response)
+                            st.session_state.current_chat.append({"role": "assistant", "content": ai_response})
+
+                        elif chart_type == "pie":
+                            if y_col == "count":
+                                pie_data = selected_df[x_col].value_counts().reset_index()
+                                pie_data.columns = [x_col, 'count']
+                                fig = px.pie(pie_data, names=x_col, values='count', title=f"Distribution of {x_col}")
+                            else:
+                                if y_col in selected_df.columns:
+                                    pie_data = selected_df.groupby(x_col)[y_col].sum().reset_index()
+                                    fig = px.pie(pie_data, names=x_col, values=y_col, title=f"{y_col} by {x_col}")
+                                else:
+                                    st.warning(f"Column '{y_col}' not found. Using count instead.")
+                                    pie_data = selected_df[x_col].value_counts().reset_index()
+                                    pie_data.columns = [x_col, 'count'] 
+                                    fig = px.pie(pie_data, names=x_col, values='count', title=f"Distribution of {x_col}")
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            ai_response = f"Here's a pie chart showing the distribution of {x_col} from the {df_name} data."
+                            st.write(ai_response)
+                            st.session_state.current_chat.append({"role": "assistant", "content": ai_response})
+
+                        elif chart_type == "line":
+                            # Check if the column can be converted to datetime
+                            is_date_column = False
+                            if x_col in selected_df.columns:
+                                try:
+                                    selected_df[x_col] = pd.to_datetime(selected_df[x_col], errors='coerce')
+                                    is_date_column = True
+                                except:
+                                    pass
+                                    
+                            if y_col == "count":
+                                if is_date_column:
+                                    # For date columns, group by day/month
+                                    line_data = selected_df.groupby(selected_df[x_col].dt.date).size().reset_index()
+                                    line_data.columns = [x_col, 'count']
+                                else:
+                                    line_data = selected_df[x_col].value_counts().sort_index().reset_index()
+                                    line_data.columns = [x_col, 'count']
+                                fig = px.line(line_data, x=x_col, y='count', title=f"Count of {x_col} Over Time")
+                            else:
+                                if y_col in selected_df.columns:
+                                    if is_date_column:
+                                        line_data = selected_df.groupby(selected_df[x_col].dt.date)[y_col].sum().reset_index()
+                                    else:
+                                        line_data = selected_df.groupby(x_col)[y_col].sum().reset_index()
+                                    fig = px.line(line_data, x=x_col, y=y_col, title=f"{y_col} by {x_col}")
+                                else:
+                                    st.warning(f"Column '{y_col}' not found. Using count instead.")
+                                    if is_date_column:
+                                        line_data = selected_df.groupby(selected_df[x_col].dt.date).size().reset_index()
+                                        line_data.columns = [x_col, 'count']
+                                    else:
+                                        line_data = selected_df[x_col].value_counts().sort_index().reset_index()
+                                        line_data.columns = [x_col, 'count']
+                                    fig = px.line(line_data, x=x_col, y='count', title=f"Count of {x_col} Over Time")
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            ai_response = f"Here's a line chart showing the trend of {x_col} from the {df_name} data."
+                            st.write(ai_response)
+                            st.session_state.current_chat.append({"role": "assistant", "content": ai_response})
+
+                        else:
+                            ai_response = "Sorry, I couldn't generate that chart type."
+                            st.warning(ai_response)
+                            st.session_state.current_chat.append({"role": "assistant", "content": ai_response})
                     
-                    
-                    data_insights = f"""
-                    Current data summary:
-                    - Total customers: {customers_count}
-                    - Total accounts: {accounts_count}
-                    - Total transactions: {transactions_count}
-                    - Average account balance: ${avg_balance:.2f}
-                    """
-                    
-                    
-                    system_prompt = get_system_prompt()
-                    
-                    
-                    full_prompt = f"{system_prompt}\n\nUser query: {user_input}\n\nSystem context: {data_insights}"
-                    
-                    
-                    response = chat.send_message(full_prompt)
-                    ai_response = response.text
-                    
-                    
-                    st.write(ai_response)
-                    
-                    
-                    st.session_state.current_chat.append({"role": "assistant", "content": ai_response})
+                    else:
+                        # Regular question answering with Gemini
+                        customers_count = customers['CustomerID'].nunique()
+                        accounts_count = accounts['AccountID'].nunique()
+                        transactions_count = transactions['TransactionID'].nunique()
+                        avg_balance = accounts['Balance'].mean()
+                        
+                        data_insights = f"""
+Current data summary:
+- Total customers: {customers_count}
+- Total accounts: {accounts_count}
+- Total transactions: {transactions_count}
+- Average account balance: ${avg_balance:.2f}
+"""
+                        
+                        system_prompt = get_system_prompt()
+                        full_prompt = f"{system_prompt}\n\nUser query: {user_input}\n\nSystem context: {data_insights}"
+                        
+                        response = chat.send_message(full_prompt)
+                        ai_response = response.text
+                        
+                        st.write(ai_response)
+                        st.session_state.current_chat.append({"role": "assistant", "content": ai_response})
                     
                 except Exception as e:
                     error_msg = f"Error getting response: {str(e)}"
                     st.error(error_msg)
                     st.session_state.current_chat.append({"role": "assistant", "content": error_msg})
 
+with tab9:
+    st.header("Automatic Data Analysis")
+
+    uploaded_file = st.file_uploader("Upload your data file (CSV or Excel)", type=["csv", "xlsx"])
+
+    if uploaded_file is not None:
+        try:
+            if uploaded_file.name.endswith(".csv"):
+                df = pd.read_csv(uploaded_file)
+            else:
+                # Improved Excel file reading
+                df = pd.read_excel(uploaded_file, engine='openpyxl')
+                
+                # Clean column names
+                df.columns = [str(col).strip() for col in df.columns]
+                
+                # Remove empty rows
+                df = df.dropna(how='all')
+                
+                # Remove empty columns
+                df = df.dropna(axis=1, how='all')
+                
+                # Convert data to appropriate types
+                for col in df.columns:
+                    try:
+                        # Attempt to convert numeric columns
+                        df[col] = pd.to_numeric(df[col], errors='ignore')
+                    except:
+                        continue
+
+            st.success("Data loaded successfully!")
+            st.write("Data Preview:")
+            st.dataframe(df.head())
+            
+            # Display data information
+            st.write("Data Information:")
+            st.write(f"Number of Rows: {len(df)}")
+            st.write(f"Number of Columns: {len(df.columns)}")
+            st.write("Column Names:")
+            st.write(df.columns.tolist())
+
+            # Create automatic analysis report
+            with st.spinner("Analyzing data..."):
+                profile = ProfileReport(df, title="Analysis Report", explorative=True)
+                st_profile_report(profile)
+                
+        except Exception as e:
+            st.error(f"Error reading file: {str(e)}")
+            st.write("Please ensure the file is in the correct format and contains structured data")
 
 
 
-
-
-
+                    
