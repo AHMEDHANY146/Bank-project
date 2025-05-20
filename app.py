@@ -1,11 +1,7 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import altair as alt
 import plotly.express as px
-import plotly.graph_objects as go
-from scipy.stats import gaussian_kde
 import numpy as np
 import urllib.request
 import json
@@ -18,7 +14,9 @@ import google.generativeai as genai
 import difflib
 from ydata_profiling import ProfileReport
 from streamlit_ydata_profiling import st_profile_report
-
+import requests
+import threading
+import time
 
 
 st.set_page_config(layout="wide")
@@ -27,13 +25,13 @@ st.title("\U0001F4CA Banking Analytics Dashboard")
 
 @st.cache_data
 def load_data():
-    customers = pd.read_csv("Banking_Analytics_Dataset_Updated2.csv")
-    accounts = pd.read_csv("Banking_Analytics_Dataset.xlsx - Accounts.csv")
-    cards = pd.read_csv("Banking_Analytics_Dataset.xlsx - Cards.csv")
-    loans = pd.read_csv("Banking_Analytics_Dataset.xlsx - Loans.csv")
-    calls = pd.read_csv("Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
-    transactions = pd.read_csv("Banking_Analytics_Transactions_Updated.csv")
-    fraud_df = pd.read_csv("Banking_Analytics_Transactions_WithFraud.csv")
+    customers = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset_Updated2.csv")
+    accounts = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset.xlsx - Accounts.csv")
+    cards = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset.xlsx - Cards.csv")
+    loans = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset.xlsx - Loans.csv")
+    calls = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
+    transactions = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Transactions_Updated.csv")
+    fraud_df = pd.read_csv("D:/bootcamp proj/bank/Banking_Analytics_Transactions_WithFraud.csv")
 
     return customers, accounts, cards, loans, calls, transactions, fraud_df
 
@@ -45,10 +43,10 @@ transactions.drop(columns=["Unnamed: 0"], inplace=True, errors='ignore')
 
 
 (
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7,tab8,tab9
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10
 ) = st.tabs([
     "Customer Overview", "Accounts", "Transactions", "Loans",
-    "Cards", "Support Calls", "Advanced Insights","Chat","Auto Analysis"
+    "Cards", "Support Calls", "Advanced Insights", "Chat", "Auto Analysis", "Telegram Reports"
 ])
 
 
@@ -1867,22 +1865,17 @@ with tab9:
             if uploaded_file.name.endswith(".csv"):
                 df = pd.read_csv(uploaded_file)
             else:
-                # Improved Excel file reading
                 df = pd.read_excel(uploaded_file, engine='openpyxl')
                 
-                # Clean column names
                 df.columns = [str(col).strip() for col in df.columns]
                 
-                # Remove empty rows
                 df = df.dropna(how='all')
                 
-                # Remove empty columns
                 df = df.dropna(axis=1, how='all')
                 
-                # Convert data to appropriate types
+                
                 for col in df.columns:
                     try:
-                        # Attempt to convert numeric columns
                         df[col] = pd.to_numeric(df[col], errors='ignore')
                     except:
                         continue
@@ -1891,14 +1884,12 @@ with tab9:
             st.write("Data Preview:")
             st.dataframe(df.head())
             
-            # Display data information
             st.write("Data Information:")
             st.write(f"Number of Rows: {len(df)}")
             st.write(f"Number of Columns: {len(df.columns)}")
             st.write("Column Names:")
             st.write(df.columns.tolist())
 
-            # Create automatic analysis report
             with st.spinner("Analyzing data..."):
                 profile = ProfileReport(df, title="Analysis Report", explorative=True)
                 st_profile_report(profile)
@@ -1907,6 +1898,136 @@ with tab9:
             st.error(f"Error reading file: {str(e)}")
             st.write("Please ensure the file is in the correct format and contains structured data")
 
+with tab10:
+    st.header("📱 Telegram Reports")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        telegram_token = st.text_input("Telegram Bot Token", value="7044390135:AAHfV0oAGsLHAoZUDXMCggenDiEVe4vZPeo")
+    with col2:
+        telegram_chat_id = st.text_input("Telegram Chat ID", value="1636741464")
+    
+    report_hour = st.slider("Hour to send daily report (24h format)", 0, 23, 9)
+    
+    
+    def send_telegram_message(message):
+        url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+        payload = {
+            "chat_id": telegram_chat_id,
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+        try:
+            response = requests.post(url, data=payload)
+            return response.status_code == 200
+        except Exception as e:
+            st.error(f"Error sending message: {e}")
+            return False
+    
+    
+    def generate_daily_report():
+        today = pd.Timestamp.now().normalize()
+        
+        customers_copy = customers.copy()
+        customers_copy['JoinDate'] = pd.to_datetime(customers_copy['JoinDate'], errors='coerce')
+        new_today = customers_copy[customers_copy['JoinDate'].dt.normalize() == today].shape[0]
+        
+        transactions_copy = transactions.copy()
+        transactions_copy['TransactionDate'] = pd.to_datetime(transactions_copy['TransactionDate'], errors='coerce')
+        last_tx = transactions_copy.merge(accounts[['AccountID', 'CustomerID']], on='AccountID', how='left') \
+            .groupby("CustomerID")["TransactionDate"].max().reset_index()
+        
+        customers_with_tx = customers_copy.merge(last_tx, on="CustomerID", how="left")
+        six_months_ago = pd.Timestamp.now() - pd.DateOffset(months=6)
+        churn_risk = customers_with_tx[(customers_with_tx['TransactionDate'].isna()) | 
+                                  (customers_with_tx['TransactionDate'] < six_months_ago)].shape[0]
+        
+        total_customers = customers_copy['CustomerID'].nunique()
+        total_balance = accounts['Balance'].sum()
+        avg_balance = accounts['Balance'].mean()
+        
+        msg = f"""📊 *Daily Banking Report - {today.date()}*
 
+👥 *Customer Metrics:*
+- Total Customers: {total_customers:,}
+- New Customers Today: {new_today}
+- Customers at Risk of Churn: {churn_risk} ({churn_risk/total_customers:.1%})
 
+💰 *Financial Metrics:*
+- Total Balance: ${total_balance:,.2f}
+- Average Balance: ${avg_balance:,.2f}
+
+📈 *Transaction Activity:*
+- Recent Transactions: {transactions_copy[transactions_copy['TransactionDate'] >= (today - pd.DateOffset(days=1))].shape[0]}
+
+✅ Report generated at {datetime.datetime.now().strftime('%H:%M:%S')}.
+"""
+        return msg
+    
+    def start_daily_report_thread():
+        def run_daily():
+            while True:
+                now = datetime.datetime.now()
+                next_run = now.replace(hour=report_hour, minute=0, second=0, microsecond=0)
+                if now >= next_run:
+                    next_run += datetime.timedelta(days=1)
+                sleep_duration = (next_run - now).total_seconds()
+                time.sleep(sleep_duration)
+                message = generate_daily_report()
+                send_telegram_message(message)
+        
+        thread = threading.Thread(target=run_daily)
+        thread.daemon = True
+        thread.start()
+        return thread
+    
+    st.subheader("Report Configuration")
+    
+    if 'telegram_thread' not in st.session_state:
+        st.session_state.telegram_thread = None
+        st.session_state.telegram_active = False
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("Start Automatic Daily Reports"):
+            if not st.session_state.telegram_active:
+                st.session_state.telegram_thread = start_daily_report_thread()
+                st.session_state.telegram_active = True
+                st.success("✅ Automatic reporting started!")
+    
+    with col2:
+        if st.button("Stop Automatic Reports"):
+            st.session_state.telegram_active = False
+            st.session_state.telegram_thread = None
+            st.info("❌ Automatic reporting stopped")
+    
+    if st.session_state.telegram_active:
+        st.success(f"✅ Automatic reports are configured to be sent daily at {report_hour}:00")
+    else:
+        st.warning("⚠️ Automatic reporting is inactive")
+    
+    st.subheader("Manual Report")
+    
+    report_preview = generate_daily_report()
+    st.code(report_preview, language="markdown")
+    
+    if st.button("📱 Send Report Now"):
+        with st.spinner("Sending report to Telegram..."):
+            if send_telegram_message(report_preview):
+                st.success("✅ Report sent successfully!")
+            else:
+                st.error("❌ Failed to send report. Check your bot token and chat ID.")
+    
+    st.subheader("Test Telegram Connection")
+    
+    test_message = st.text_input("Test Message", value="Hello from Banking Dashboard!")
+    
+    if st.button("Send Test Message"):
+        with st.spinner("Testing connection..."):
+            if send_telegram_message(test_message):
+                st.success("✅ Connection successful! Message sent.")
+            else:
+                st.error("❌ Connection failed. Please check your Telegram bot token and chat ID.")
+                
                     
