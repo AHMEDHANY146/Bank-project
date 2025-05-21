@@ -14,3 +14,4 @@ streamlit_ydata_profiling
 google-generativeai
 setuptools
 requests
+joblib
