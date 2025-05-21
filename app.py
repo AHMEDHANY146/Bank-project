@@ -1,7 +1,11 @@
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 import altair as alt
 import plotly.express as px
+import plotly.graph_objects as go
+from scipy.stats import gaussian_kde
 import numpy as np
 import urllib.request
 import json
@@ -17,9 +21,16 @@ from streamlit_ydata_profiling import st_profile_report
 import requests
 import threading
 import time
+import joblib  
+import os
 
 
-st.set_page_config(layout="wide")
+st.set_page_config(
+    page_title="Banking Analytics Dashboard",
+    page_icon="🏦",
+    layout="wide"
+)
+
 st.title("\U0001F4CA Banking Analytics Dashboard")
 
 
@@ -35,6 +46,12 @@ def load_data():
 
     return customers, accounts, cards, loans, calls, transactions, fraud_df
 
+
+@st.cache_resource
+def load_ml_model():
+    model = joblib.load(r'best_rf_churn_model (1).pkl')
+    return model
+
 customers, accounts, cards, loans, calls, transactions, fraud_df = load_data()
 
 customers.drop(columns=["Unnamed: 0"], inplace=True, errors='ignore')
@@ -43,10 +60,10 @@ transactions.drop(columns=["Unnamed: 0"], inplace=True, errors='ignore')
 
 
 (
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11
 ) = st.tabs([
     "Customer Overview", "Accounts", "Transactions", "Loans",
-    "Cards", "Support Calls", "Advanced Insights", "Chat", "Auto Analysis", "Telegram Reports"
+    "Cards", "Support Calls", "Advanced Insights", "Chat", "Auto Analysis", "Telegram Reports", "Churn Prediction"
 ])
 
 
@@ -1865,17 +1882,22 @@ with tab9:
             if uploaded_file.name.endswith(".csv"):
                 df = pd.read_csv(uploaded_file)
             else:
+                # Improved Excel file reading
                 df = pd.read_excel(uploaded_file, engine='openpyxl')
                 
+                # Clean column names
                 df.columns = [str(col).strip() for col in df.columns]
                 
+                # Remove empty rows
                 df = df.dropna(how='all')
                 
+                # Remove empty columns
                 df = df.dropna(axis=1, how='all')
                 
-                
+                # Convert data to appropriate types
                 for col in df.columns:
                     try:
+                        # Attempt to convert numeric columns
                         df[col] = pd.to_numeric(df[col], errors='ignore')
                     except:
                         continue
@@ -1884,12 +1906,14 @@ with tab9:
             st.write("Data Preview:")
             st.dataframe(df.head())
             
+            # Display data information
             st.write("Data Information:")
             st.write(f"Number of Rows: {len(df)}")
             st.write(f"Number of Columns: {len(df.columns)}")
             st.write("Column Names:")
             st.write(df.columns.tolist())
 
+            # Create automatic analysis report
             with st.spinner("Analyzing data..."):
                 profile = ProfileReport(df, title="Analysis Report", explorative=True)
                 st_profile_report(profile)
@@ -1901,6 +1925,7 @@ with tab9:
 with tab10:
     st.header("📱 Telegram Reports")
     
+    # ==== Bot Configuration ====
     col1, col2 = st.columns(2)
     with col1:
         telegram_token = st.text_input("Telegram Bot Token", value="7044390135:AAHfV0oAGsLHAoZUDXMCggenDiEVe4vZPeo")
@@ -1909,7 +1934,7 @@ with tab10:
     
     report_hour = st.slider("Hour to send daily report (24h format)", 0, 23, 9)
     
-    
+    # ==== Send Telegram Message ====
     def send_telegram_message(message):
         url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
         payload = {
@@ -1924,14 +1949,16 @@ with tab10:
             st.error(f"Error sending message: {e}")
             return False
     
-    
+    # ==== Generate Daily Report ====
     def generate_daily_report():
         today = pd.Timestamp.now().normalize()
         
+        # Process customer data
         customers_copy = customers.copy()
         customers_copy['JoinDate'] = pd.to_datetime(customers_copy['JoinDate'], errors='coerce')
         new_today = customers_copy[customers_copy['JoinDate'].dt.normalize() == today].shape[0]
         
+        # Process transaction data
         transactions_copy = transactions.copy()
         transactions_copy['TransactionDate'] = pd.to_datetime(transactions_copy['TransactionDate'], errors='coerce')
         last_tx = transactions_copy.merge(accounts[['AccountID', 'CustomerID']], on='AccountID', how='left') \
@@ -1942,6 +1969,7 @@ with tab10:
         churn_risk = customers_with_tx[(customers_with_tx['TransactionDate'].isna()) | 
                                   (customers_with_tx['TransactionDate'] < six_months_ago)].shape[0]
         
+        # Calculate other metrics
         total_customers = customers_copy['CustomerID'].nunique()
         total_balance = accounts['Balance'].sum()
         avg_balance = accounts['Balance'].mean()
@@ -1964,6 +1992,7 @@ with tab10:
 """
         return msg
     
+    # ==== Run Daily Report Thread at Specific Hour ====
     def start_daily_report_thread():
         def run_daily():
             while True:
@@ -1981,6 +2010,7 @@ with tab10:
         thread.start()
         return thread
     
+    # ==== Status and Controls ====
     st.subheader("Report Configuration")
     
     if 'telegram_thread' not in st.session_state:
@@ -2030,4 +2060,113 @@ with tab10:
             else:
                 st.error("❌ Connection failed. Please check your Telegram bot token and chat ID.")
                 
+    with st.expander("ℹ️ How to setup your Telegram bot"):
+        st.markdown("""
+        1. **Create a Telegram Bot**:
+           - Open Telegram and search for `@BotFather`
+           - Send the command `/newbot` and follow the instructions
+           - BotFather will give you a token - copy it to the "Telegram Bot Token" field above
+        
+        2. **Get your Chat ID**:
+           - Search for `@userinfobot` on Telegram
+           - Start a chat with this bot
+           - It will reply with your Chat ID - copy it to the "Telegram Chat ID" field above
+        
+        3. **Test the Connection**:
+           - Use the "Send Test Message" button to verify everything works
+           - If successful, you can enable automatic daily reports
+        """)
+
+with tab11:
+    st.header("🏦 Customer Churn Prediction")
+    st.write("""
+    ### Use this application to predict if a customer is likely to churn
+    Fill in the customer information below and click 'Predict' to get the churn probability.
+    """)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Customer Profile")
+        tenure = st.number_input("Tenure (years)", min_value=0.0, max_value=50.0, value=5.0, key="churn_tenure")
+        total_balance = st.number_input("Total Balance ($)", min_value=0.0, max_value=1000000.0, value=10000.0, key="churn_balance")
+        num_products = st.number_input("Number of Products", min_value=1, max_value=10, value=1, key="churn_products")
+        
+    with col2:
+        st.subheader("Transaction Information")
+        recency = st.number_input("Days Since Last Transaction", min_value=0, max_value=365, value=30, key="churn_recency")
+        frequency = st.number_input("Transaction Frequency (monthly)", min_value=0, max_value=100, value=10, key="churn_frequency")
+        monetary = st.number_input("Average Transaction Amount ($)", min_value=0.0, max_value=10000.0, value=100.0, key="churn_monetary")
+
+    st.subheader("Additional Information")
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        has_loan = st.selectbox("Has Active Loan?", ["Yes", "No"], key="churn_has_loan")
+        num_cards = st.number_input("Number of Cards", min_value=0, max_value=10, value=1, key="churn_cards")
+    
+    with col4:
+        support_calls = st.number_input("Number of Support Calls", min_value=0, max_value=50, value=0, key="churn_calls")
+        resolution_rate = st.slider("Support Resolution Rate", min_value=0.0, max_value=1.0, value=1.0, key="churn_resolution")
+
+    features = {
+        'customerid': 1,  
+        'tenure': tenure,
+        'total_balance': total_balance,
+        'number_of_accounts': num_products,
+        'recency': recency,
+        'frequency': frequency,
+        'monetary': monetary,
+        'has_active_loan': 1 if has_loan == "Yes" else 0,
+        'number_of_cards': num_cards,
+        'support_call_frequency': support_calls,
+        'resolution_rate': resolution_rate
+    }
+
+    if st.button("Predict Churn Probability", key="churn_predict_button"):
+        model = load_ml_model()
+        
+        input_df = pd.DataFrame([features])
+        prediction_prob = model.predict_proba(input_df)[0][1]
+        
+        st.subheader("Prediction Results")
+        
+
+        if prediction_prob < 0.3:
+            color = "green"
+            risk_level = "Low Risk"
+        elif prediction_prob < 0.7:
+            color = "orange"
+            risk_level = "Medium Risk"
+        else:
+            color = "red"
+            risk_level = "High Risk"
+            
+        st.markdown(f"""
+        <div style="padding: 20px; border-radius: 10px; background-color: {color}25;">
+            <h3 style="color: {color};">{risk_level}</h3>
+            <h2 style="color: {color};">{prediction_prob:.1%}</h2>
+            <p>Probability of Customer Churn</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        
+        st.subheader("Risk Analysis")
+        if prediction_prob < 0.3:
+            st.write("📈 This customer shows strong loyalty indicators.")
+            st.write("Recommendations:")
+            st.write("- Consider offering premium services or products")
+            st.write("- Enroll in loyalty rewards program")
+        elif prediction_prob < 0.7:
+            st.write("⚠️ This customer shows moderate churn risk.")
+            st.write("Recommendations:")
+            st.write("- Proactive engagement through targeted offers")
+            st.write("- Schedule customer satisfaction survey")
+            st.write("- Review product usage patterns")
+        else:
+            st.write("🚨 High risk of customer churn!")
+            st.write("Recommendations:")
+            st.write("- Immediate customer outreach")
+            st.write("- Develop retention strategy")
+            st.write("- Consider special retention offers")
                     
