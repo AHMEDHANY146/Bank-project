@@ -98,7 +98,7 @@ def load_data():
 
 @st.cache_resource
 def load_ml_model():
-    model = joblib.load(r'D:\Bootcampproj\ML\best_rf_churn_model (1).pkl')
+    model = joblib.load(r'best_rf_churn_model (1).pkl')
     return model
 
 customers, accounts, cards, loans, calls, transactions, fraud_df = load_data()
