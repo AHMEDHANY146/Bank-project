@@ -96,7 +96,8 @@ with tab1:
         )
 
     with col4:
-        average_accounts_per_customer = accounts['AccountID'].nunique() / all_customers['CustomerID'].nunique()
+        customers_with_accounts = accounts['CustomerID'].nunique()
+        average_accounts_per_customer = accounts['AccountID'].nunique() / customers_with_accounts
         st.metric("Average Accounts per Customer", round(average_accounts_per_customer))
 
     with col5:
