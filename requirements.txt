@@ -16,3 +16,4 @@ setuptools
 requests
 joblib
 pyodbc
+sqlalchemy
