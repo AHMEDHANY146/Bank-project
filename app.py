@@ -1,11 +1,7 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import altair as alt
 import plotly.express as px
-import plotly.graph_objects as go
-from scipy.stats import gaussian_kde
 import urllib.request
 import json
 import pydeck as pdk
@@ -21,10 +17,9 @@ import requests
 import threading
 import time
 import joblib  
-import os
 import pyodbc
 import pandas as pd
-import sqlalchemy
+
 
 
 st.set_page_config(
@@ -43,7 +38,7 @@ def load_data():
         # Try to load from data directory (for deployment)
         customers = pd.read_csv("Banking_Analytics_Dataset_Updated2.csv")
         transactions = pd.read_csv("Banking_Analytics_Transactions_Updated.csv")
-        fraud_df = pd.read_csv("data/Banking_Analytics_Transactions_WithFraud.csv")
+        fraud_df = pd.read_csv("Banking_Analytics_Transactions_WithFraud.csv")
     except FileNotFoundError:
         # Fallback to original local paths for development
         customers = pd.read_csv(r"Banking_Analytics_Dataset_Updated2.csv")
@@ -2753,9 +2748,19 @@ with tab10:
     # ==== Bot Configuration ====
     col1, col2 = st.columns(2)
     with col1:
-        telegram_token = st.text_input("Telegram Bot Token", value="7044390135:AAHfV0oAGsLHAoZUDXMCggenDiEVe4vZPeo")
+        # Use secrets for Telegram bot token and never show the actual token
+        try:
+            telegram_token = st.secrets["telegram"]["bot_token"]
+            st.text_input("Telegram Bot Token", value="*****************************", disabled=True, help="Token is securely stored in secrets")
+        except:
+            telegram_token = ""
     with col2:
-        telegram_chat_id = st.text_input("Telegram Chat ID", value="1636741464")
+        # Use secrets for Telegram chat ID and never show the actual ID
+        try:
+            telegram_chat_id = st.secrets["telegram"]["chat_id"]
+            st.text_input("Telegram Chat ID", value="**********", disabled=True, help="Chat ID is securely stored in secrets")
+        except:
+            telegram_chat_id = ""
     
     report_hour = st.slider("Hour to send daily report (24h format)", 0, 23, 9)
     
