@@ -6,7 +6,6 @@ import altair as alt
 import plotly.express as px
 import plotly.graph_objects as go
 from scipy.stats import gaussian_kde
-import numpy as np
 import urllib.request
 import json
 import pydeck as pdk
@@ -23,6 +22,9 @@ import threading
 import time
 import joblib  
 import os
+import pyodbc
+import pandas as pd
+import sqlalchemy
 
 
 st.set_page_config(
@@ -36,20 +38,67 @@ st.title("\U0001F4CA Banking Analytics Dashboard")
 
 @st.cache_data
 def load_data():
-    customers = pd.read_csv("Banking_Analytics_Dataset_Updated2.csv")
-    accounts = pd.read_csv("Banking_Analytics_Dataset.xlsx - Accounts.csv")
-    cards = pd.read_csv("Banking_Analytics_Dataset.xlsx - Cards.csv")
-    loans = pd.read_csv("Banking_Analytics_Dataset.xlsx - Loans.csv")
-    calls = pd.read_csv("Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
-    transactions = pd.read_csv("Banking_Analytics_Transactions_Updated.csv")
-    fraud_df = pd.read_csv("Banking_Analytics_Transactions_WithFraud.csv")
+    # Load customer and transaction tables from CSV files - using GitHub or data folder
+    try:
+        # Try to load from data directory (for deployment)
+        customers = pd.read_csv("Banking_Analytics_Dataset_Updated2.csv")
+        transactions = pd.read_csv("Banking_Analytics_Transactions_Updated.csv")
+        fraud_df = pd.read_csv("data/Banking_Analytics_Transactions_WithFraud.csv")
+    except FileNotFoundError:
+        # Fallback to original local paths for development
+        customers = pd.read_csv(r"Banking_Analytics_Dataset_Updated2.csv")
+        transactions = pd.read_csv(r"Banking_Analytics_Transactions_Updated.csv")
+        fraud_df = pd.read_csv(r"Banking_Analytics_Transactions_WithFraud.csv")
+    
+    # Configure Azure SQL database connection using secrets
+    sql_server_fqdn = st.secrets["sql_credentials"]["server"]
+    sql_database_name = st.secrets["sql_credentials"]["database"]
+    sql_admin_user = st.secrets["sql_credentials"]["username"]
+    sql_admin_password = st.secrets["sql_credentials"]["password"]
+    
+    # Build connection string
+    connection_string = (
+        f"Driver={{ODBC Driver 17 for SQL Server}};"
+        f"Server={sql_server_fqdn};"
+        f"Database={sql_database_name};"
+        f"Uid={sql_admin_user};"
+        f"Pwd={sql_admin_password};"
+        f"Encrypt=yes;"
+        f"TrustServerCertificate=no;"
+        f"Connection Timeout=30;"
+    )
+    
+    try:
+        # Create database connection
+        conn = pyodbc.connect(connection_string)
+        
+        # Read remaining tables from Azure SQL database
+        accounts = pd.read_sql("SELECT * FROM Accounts", conn)
+        cards = pd.read_sql("SELECT * FROM Cards", conn)
+        loans = pd.read_sql("SELECT * FROM Loans", conn)
+        calls = pd.read_sql("SELECT * FROM SupportCalls", conn)
+        
+        # Close connection
+        conn.close()
+        
+        st.success("Successfully connected to Azure SQL database and imported tables")
 
+    except Exception as e:
+        st.error(f"Database connection error: {e}")
+        st.warning("Using backup CSV files for all tables...")
+        
+        # Use CSV files as backup if database connection fails
+        accounts = pd.read_csv(r"Banking_Analytics_Dataset.xlsx - Accounts.csv")
+        cards = pd.read_csv(r"Banking_Analytics_Dataset.xlsx - Cards.csv")
+        loans = pd.read_csv(r"Banking_Analytics_Dataset.xlsx - Loans.csv")
+        calls = pd.read_csv(r"Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
+    
     return customers, accounts, cards, loans, calls, transactions, fraud_df
 
 
 @st.cache_resource
 def load_ml_model():
-    model = joblib.load(r'best_rf_churn_model (1).pkl')
+    model = joblib.load(r'D:\Bootcampproj\ML\best_rf_churn_model (1).pkl')
     return model
 
 customers, accounts, cards, loans, calls, transactions, fraud_df = load_data()
@@ -129,6 +178,107 @@ with tab1:
     
     fig.update_layout(height=400)
     st.plotly_chart(fig, use_container_width=True)
+
+
+
+
+    
+    merged_txn_accounts = transactions.merge(accounts[['AccountID', 'CustomerID']], on='AccountID', how='left')
+    full_merged = merged_txn_accounts.merge(customers[['CustomerID', 'State']], on='CustomerID', how='left')
+
+    
+    payment_counts = full_merged[full_merged["TransactionType"] == "Payment"] \
+        .groupby("State").size().reset_index(name="payment_count")
+
+    
+    geojson_url = "https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json"
+    with urllib.request.urlopen(geojson_url) as response:
+        us_states_geojson = json.load(response)
+
+    max_payment = payment_counts["payment_count"].max()
+
+    
+    for feature in us_states_geojson["features"]:
+        state_name = feature["properties"]["name"]
+        match = payment_counts[payment_counts["State"] == state_name]
+        if not match.empty:
+            count = int(match["payment_count"].values[0])
+            norm = count / max_payment if max_payment > 0 else 0
+            feature["properties"]["payment_count"] = count
+            feature["properties"]["payment_norm"] = norm
+        else:
+            feature["properties"]["payment_count"] = 0
+            feature["properties"]["payment_norm"] = 0
+
+    
+    labels_data = []
+    for feature in us_states_geojson["features"]:
+        geom = shape(feature["geometry"])
+        centroid = [geom.representative_point().x, geom.representative_point().y]
+        labels_data.append({
+            "coordinates": centroid,
+            "name": feature["properties"]["name"],
+            "payment_count": feature["properties"]["payment_count"]
+        })
+
+    
+    choropleth_layer = pdk.Layer(
+        "GeoJsonLayer",
+        us_states_geojson,
+        pickable=True,
+        stroked=True,
+        filled=True,
+        extruded=False,
+        get_fill_color="""
+        [
+            properties.payment_norm * 255,
+            (1 - properties.payment_norm) * 100,
+            (1 - properties.payment_norm) * 100
+        ]
+        """,
+        get_line_color=[255, 255, 255],
+        line_width_min_pixels=1,
+    )
+
+    text_layer = pdk.Layer(
+        "TextLayer",
+        labels_data,
+        pickable=False,
+        get_position="coordinates",
+        get_text="name",
+        get_size=14,
+        get_color=[0, 0, 0],
+        get_angle=0,
+        get_text_anchor='"middle"',
+        get_alignment_baseline='"center"',
+    )
+
+    
+    view_state = pdk.ViewState(latitude=37.5, longitude=-96, zoom=4.0)
+
+    tooltip = {
+        "html": "<b>{name}</b><br/>Payments: {payment_count}",
+        "style": {"color": "white"}
+    }
+
+    deck = pdk.Deck(
+        layers=[choropleth_layer, text_layer],
+        initial_view_state=view_state,
+        tooltip=tooltip,
+        map_provider="carto",
+        map_style="https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
+    )
+
+    
+    st.pydeck_chart(deck)
+
+
+
+
+
+
+
+
 
     join_by_month.index = join_by_month.index.to_timestamp()
     join_by_month_df = join_by_month.reset_index()
@@ -281,107 +431,35 @@ with tab1:
         
         st.plotly_chart(fig, use_container_width=True)
 
-
-
-
-    churn_by_month = churn_risk_customers['JoinDate'].dt.to_period('M').value_counts().sort_index()
-    churn_by_month.index = churn_by_month.index.to_timestamp()
-    churn_by_month_df = churn_by_month.reset_index()
-    churn_by_month_df.columns = ['Month', 'Churn Count']
-    st.subheader("Churn Count by Month")
-    st.line_chart(churn_by_month_df.set_index('Month'))
-
-
-
+    st.markdown("<div class='insights-text'>", unsafe_allow_html=True)
+    st.markdown(f"""
+    **Churn Risk Insight:** {churn_risk_percentage:.1f}% of customers show signs of potential churn,
+    representing opportunities for targeted engagement campaigns to reactivate dormant accounts.
+    """)
+    st.markdown("</div>", unsafe_allow_html=True)
     
-    merged_txn_accounts = transactions.merge(accounts[['AccountID', 'CustomerID']], on='AccountID', how='left')
-    full_merged = merged_txn_accounts.merge(customers[['CustomerID', 'State']], on='CustomerID', how='left')
-
+    # Key Insights Summary
+    st.subheader("🔍 Key Insights")
     
-    payment_counts = full_merged[full_merged["TransactionType"] == "Payment"] \
-        .groupby("State").size().reset_index(name="payment_count")
-
+    col1, col2 = st.columns(2)
     
-    geojson_url = "https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json"
-    with urllib.request.urlopen(geojson_url) as response:
-        us_states_geojson = json.load(response)
-
-    max_payment = payment_counts["payment_count"].max()
-
+    with col1:
+        growth_metrics_text = f"""
+        ### Growth Metrics
+        - **Customer Base:** The bank has a total of {all_customers['CustomerID'].nunique():,} customers with {average_accounts_per_customer:.1f} accounts per customer on average.
+        - **Acquisition Trend:** An average of {average_new_customers:.0f} new customers join monthly, with seasonal peaks in Q2.
+        - **Geographic Distribution:** Top states show concentration in urban centers with significant customer clusters.
+        """
+        st.markdown(growth_metrics_text)
     
-    for feature in us_states_geojson["features"]:
-        state_name = feature["properties"]["name"]
-        match = payment_counts[payment_counts["State"] == state_name]
-        if not match.empty:
-            count = int(match["payment_count"].values[0])
-            norm = count / max_payment if max_payment > 0 else 0
-            feature["properties"]["payment_count"] = count
-            feature["properties"]["payment_norm"] = norm
-        else:
-            feature["properties"]["payment_count"] = 0
-            feature["properties"]["payment_norm"] = 0
-
-    
-    labels_data = []
-    for feature in us_states_geojson["features"]:
-        geom = shape(feature["geometry"])
-        centroid = [geom.representative_point().x, geom.representative_point().y]
-        labels_data.append({
-            "coordinates": centroid,
-            "name": feature["properties"]["name"],
-            "payment_count": feature["properties"]["payment_count"]
-        })
-
-    
-    choropleth_layer = pdk.Layer(
-        "GeoJsonLayer",
-        us_states_geojson,
-        pickable=True,
-        stroked=True,
-        filled=True,
-        extruded=False,
-        get_fill_color="""
-        [
-            properties.payment_norm * 255,
-            (1 - properties.payment_norm) * 100,
-            (1 - properties.payment_norm) * 100
-        ]
-        """,
-        get_line_color=[255, 255, 255],
-        line_width_min_pixels=1,
-    )
-
-    text_layer = pdk.Layer(
-        "TextLayer",
-        labels_data,
-        pickable=False,
-        get_position="coordinates",
-        get_text="name",
-        get_size=14,
-        get_color=[0, 0, 0],
-        get_angle=0,
-        get_text_anchor='"middle"',
-        get_alignment_baseline='"center"',
-    )
-
-    
-    view_state = pdk.ViewState(latitude=37.5, longitude=-96, zoom=4.0)
-
-    tooltip = {
-        "html": "<b>{name}</b><br/>Payments: {payment_count}",
-        "style": {"color": "white"}
-    }
-
-    deck = pdk.Deck(
-        layers=[choropleth_layer, text_layer],
-        initial_view_state=view_state,
-        tooltip=tooltip,
-        map_provider="carto",
-        map_style="https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
-    )
-
-    
-    st.pydeck_chart(deck)
+    with col2:
+        risk_assessment_text = f"""
+        ### Risk Assessment
+        - **Churn Indicators:** {churn_risk_percentage:.1f}% of customers show inactivity patterns suggesting churn risk.
+        - **High-Risk Segments:** The "Very High Risk" segment requires immediate intervention strategies.
+        - **Regional Patterns:** Certain states show significantly higher churn risk, suggesting targeted regional retention campaigns.
+        """
+        st.markdown(risk_assessment_text)
 
 with tab2:
     st.header("\U0001F3E6 Accounts Overview")
@@ -460,7 +538,7 @@ with tab2:
     
     accounts_with_tx['ActivitySegment'] = pd.cut(
         accounts_with_tx['TransactionCount'],
-        bins=[-1, 0, 10, 50, float('inf')],
+        bins=[-1, 0, 5, 10, float('inf')],
         labels=['Inactive', 'Low Activity', 'Medium Activity', 'High Activity']
     )
     
@@ -483,12 +561,7 @@ with tab2:
         y='Account Count',
         title='Account Activity Levels',
         color='Activity Level',
-        color_discrete_map={
-            'Inactive': '#d3d3d3',
-            'Low Activity': '#ffd966',
-            'Medium Activity': '#93c47d',
-            'High Activity': '#6fa8dc'
-        },
+        color_discrete_sequence=px.colors.sequential.Blues_r,  
         text_auto=True
     )
     fig.update_layout(xaxis_title='Activity Level', yaxis_title='Number of Accounts')
@@ -610,6 +683,29 @@ with tab2:
     Consider targeted reactivation campaigns for these accounts, especially those with high balances.
     """)
     st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Key Insights Summary for Accounts
+    st.subheader("🔍 Key Insights: Accounts")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        account_performance_text = f"""
+        ### Account Performance
+        - **Portfolio Distribution:** {dominant_account_type} accounts are dominant, representing {dominant_account_percentage:.1f}% of all accounts.
+        - **Balance Concentration:** {highest_balance_type} accounts hold the highest total balance at {highest_balance_percentage:.1f}% of total funds.
+        - **Account Activity:** {inactive_percentage:.1f}% of accounts show no transaction activity, indicating engagement opportunities.
+        """
+        st.markdown(account_performance_text)
+    
+    with col2:
+        risk_opportunity_text = f"""
+        ### Risk & Opportunity Areas
+        - **Dormancy Issue:** {highest_dormancy_type} accounts have a {highest_dormancy_rate:.1f}% dormancy rate, requiring targeted reactivation.
+        - **Idle Capital:** ${dormant_balance:,.2f} ({dormant_balance_percentage:.1f}% of total) sits in dormant accounts, representing revenue opportunity.
+        - **Account Optimization:** Consider consolidation strategies for customers with multiple low-activity accounts.
+        """
+        st.markdown(risk_opportunity_text)
 
 with tab3:
     st.header("💸 Transactions Overview")
@@ -839,7 +935,7 @@ with tab3:
             names=["Fraudulent Transactions", "Legitimate Transactions"],
             values=[fraud_count, legit_count],
             title="Fraud vs. Legitimate Transactions",
-            color_discrete_sequence=["#ff6b6b", "#4ecdc4"],
+            color_discrete_sequence=px.colors.sequential.Reds_r,
             hole=0.4
         )
         fig.update_traces(textinfo='percent+label')
@@ -884,17 +980,16 @@ with tab3:
             fraud_day_analysis["DayName"] = fraud_day_analysis["DayOfWeek"].apply(lambda x: day_names[x])
             fraud_day_analysis.columns = ["Day Number", "Fraud Count", "Day of Week"]
             
-            col1, col2 = st.columns(2)
-            with col1:
-                fig = px.bar(
-                    fraud_day_analysis, 
-                    x="Day of Week", 
-                    y="Fraud Count", 
-                    title="Distribution of Fraudulent Transactions by Day of Week",
-                    color="Fraud Count",
-                    color_continuous_scale=px.colors.sequential.Reds
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            
+            fig = px.bar(
+                fraud_day_analysis, 
+                x="Day of Week", 
+                y="Fraud Count", 
+                title="Distribution of Fraudulent Transactions by Day of Week",
+                color="Fraud Count",
+                color_continuous_scale=px.colors.sequential.Reds
+            )
+            st.plotly_chart(fig, use_container_width=True)
             
         else:
             st.info("Date data not available for temporal analysis")
@@ -931,10 +1026,7 @@ with tab3:
                 y="Average Amount",
                 title="Comparison of Average Transaction Amounts",
                 color="Transaction Type",
-                color_discrete_map={
-                    "Fraudulent": "#ff6b6b",
-                    "Legitimate": "#4ecdc4"
-                }
+                color_continuous_scale=px.colors.sequential.Reds
             )
             st.plotly_chart(fig, use_container_width=True)
 
@@ -972,7 +1064,7 @@ with tab3:
         y="Importance", 
         title="Key Factors in Fraud Detection",
         color="Importance",
-        color_continuous_scale=px.colors.sequential.Viridis
+        color_continuous_scale=px.colors.sequential.Reds
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -1015,6 +1107,29 @@ with tab3:
     except Exception as e:
         st.error(f"Error filtering data: {str(e)}")
 
+    # Key Insights Summary for Transactions
+    st.subheader("🔍 Key Insights: Transactions")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        transaction_patterns_text = f"""
+        ### Transaction Patterns
+        - **Volume Analysis:** Transaction volume shows distinct seasonal patterns with peaks in specific months.
+        - **Daily Patterns:** Transaction density varies significantly by day of week and time of day, with clear peak periods.
+        - **Monthly Trends:** Monthly transaction counts exhibit consistent patterns that can inform staffing and system capacity planning.
+        """
+        st.markdown(transaction_patterns_text)
+    
+    with col2:
+        fraud_risk_text = f"""
+        ### Fraud & Risk Insights
+        - **Fraud Detection:** {fraud_count:,} fraudulent transactions ({(fraud_count / total_tx) * 100:.2f}% of total) have been identified.
+        - **Risk Patterns:** Specific transaction types and time periods show elevated fraud risk, requiring enhanced monitoring.
+        - **Prevention Opportunities:** Transaction monitoring can be optimized for high-risk transaction profiles and time windows.
+        """
+        st.markdown(fraud_risk_text)
+
 with tab4:
     st.header("🏦 Loans Analysis")
     st.metric("Total Loans", loans['LoanID'].nunique())
@@ -1030,31 +1145,58 @@ with tab4:
                  title='Total Loan Amount Disbursed by Type', 
                  labels={'LoanType': 'Loan Type', 'LoanAmount': 'Total Amount'},
                  color='LoanAmount', 
-                 color_continuous_scale=px.colors.sequential.Viridis)
+                 color_continuous_scale=px.colors.sequential.Reds)
 
     st.plotly_chart(fig)
 
 
     st.subheader("Loan Types")
-    st.bar_chart(loans['LoanType'].value_counts())
+    loan_counts = loans['LoanType'].value_counts().reset_index()
+    loan_counts.columns = ['Loan Type', 'Count']
+
+    
+    fig = px.bar(
+        loan_counts,
+        x='Loan Type',
+        y='Count',
+        color='Count',
+        color_continuous_scale=px.colors.sequential.Reds,
+        title='Loan Types Distribution'
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Average Interest Rate per Loan Type")
 
     
-    loans['InterestRate'] = loans['InterestRate'].astype(str)  
-    loans['InterestRate'] = loans['InterestRate'].str.replace(r'[^\d.,]', '', regex=True)  
-    loans['InterestRate'] = loans['InterestRate'].str.replace(',', '.')  
-    loans['InterestRate'] = pd.to_numeric(loans['InterestRate'], errors='coerce')  
+    # Clean InterestRate: convert Arabic decimal to dot
+    loans['InterestRate'] = loans['InterestRate'].astype(str)
+    loans['InterestRate'] = loans['InterestRate'].str.replace('٫', '.', regex=False)
+    loans['InterestRate'] = loans['InterestRate'].str.replace(',', '.', regex=False)
+    loans['InterestRate'] = pd.to_numeric(loans['InterestRate'], errors='coerce')
+
+    # ✅ No need to drop values over 100, just ensure they're read correctly
+
+    # Define the weighted average function
+    def calculate_weighted_average_interest(df, amount_col='LoanAmount', rate_col='InterestRate'):
+        df = df.copy()
+        df = df.dropna(subset=[amount_col, rate_col])
+        total_weighted = (df[amount_col] * df[rate_col]).sum()
+        total_amount = df[amount_col].sum()
+        return total_weighted / total_amount if total_amount != 0 else None
+
+    # Calculate and display
+    weighted_avg_rate = calculate_weighted_average_interest(loans)
+    st.metric("Weighted Average Interest Rate", f"{weighted_avg_rate:.2f}%")
 
 
-    
+    # Average interest by loan type
     avg_interest_by_type = loans.groupby('LoanType')['InterestRate'].mean().reset_index()
     avg_interest_by_type = avg_interest_by_type.sort_values(by='InterestRate', ascending=False)
 
-    
     st.dataframe(avg_interest_by_type.style.format({'InterestRate': '{:.2f}%'}))
 
-    
+    # Bar chart of average interest by loan type
     fig = px.bar(
         avg_interest_by_type,
         x='LoanType',
@@ -1062,13 +1204,12 @@ with tab4:
         title='Average Interest Rate per Loan Type',
         labels={'LoanType': 'Loan Type', 'InterestRate': 'Avg Interest Rate (%)'},
         color='InterestRate',
-        color_continuous_scale=px.colors.sequential.Blues
+        color_continuous_scale=px.colors.sequential.Reds
     )
-
     st.plotly_chart(fig, use_container_width=True)
 
-
-    st.subheader("Interest Rates Distribution")
+    # Interest rate distribution
+    st.subheader("Interest Rate Distribution")
     fig = px.histogram(
         loans,
         x="InterestRate",
@@ -1085,7 +1226,6 @@ with tab4:
         yaxis_title="Number of Loans",
         title_x=0.5
     )
-
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -1122,100 +1262,344 @@ with tab4:
 
 with tab5:
     st.header("💳 Cards Overview")
-
     
-    st.metric("Total Cards", cards['CardID'].nunique())
-
+    # إحصائيات رئيسية
+    col1, col2, col3, col4 = st.columns(4)
     
-    st.bar_chart(cards['CardType'].value_counts())
-
+    with col1:
+        total_cards = cards['CardID'].nunique()
+        st.metric("Total Cards", f"{total_cards:,}")
+    
+    with col2:
+        cards_per_customer = total_cards / cards['CustomerID'].nunique()
+        st.metric("Cards per Customer", f"{cards_per_customer:.2f}")
+    
+    with col3:
+        cards['ExpirationDate'] = pd.to_datetime(cards['ExpirationDate'], errors='coerce')
+        today = pd.Timestamp(datetime.date.today())
+        
+        # البطاقات التي ستنتهي خلال 90 يوم
+        expiring_soon = cards[(cards['ExpirationDate'] > today) & 
+                             (cards['ExpirationDate'] <= today + pd.DateOffset(days=90))].shape[0]
+        st.metric("Expiring in 90 Days", expiring_soon)
+    
+    with col4:
+        active_cards = cards[cards['ExpirationDate'] > today].shape[0]
+        active_percentage = (active_cards / total_cards) * 100 if total_cards > 0 else 0
+        st.metric("Active Cards", f"{active_percentage:.1f}%")
+    
+    # تحليل أنواع البطاقات
+    st.subheader("📊 Card Type Analysis")
+    
+    card_type_counts = cards['CardType'].value_counts().reset_index()
+    card_type_counts.columns = ['Card Type', 'Count']
+    
+    col1, col2 = st.columns([2, 3])
+    
+    with col1:
+        fig = px.pie(
+            card_type_counts, 
+            names='Card Type', 
+            values='Count',
+            title="Distribution of Card Types",
+            color_discrete_sequence=px.colors.qualitative.Bold,
+            hole=0.4
+        )
+        fig.update_traces(textposition='inside', textinfo='percent+label')
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        fig = px.bar(
+            card_type_counts,
+            x='Card Type',
+            y='Count',
+            title='Card Count by Type',
+            color='Card Type',
+            text='Count'
+        )
+        fig.update_traces(texttemplate='%{text}', textposition='outside')
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # تحليل إصدار البطاقات عبر الزمن
+    st.subheader("📈 Card Issuance Trends")
     
     cards['IssuedDate'] = pd.to_datetime(cards['IssuedDate'], errors='coerce')
-
     
-    cards['IssuedMonth'] = cards['IssuedDate'].dt.to_period('M').dt.to_timestamp()
-    grouped = cards.groupby(['IssuedMonth', 'CardType']).size().reset_index(name='Count')
-
+    # فلتر لاختيار النطاق الزمني
+    date_range = st.date_input(
+        "Select Date Range",
+        [cards['IssuedDate'].min().date(), cards['IssuedDate'].max().date()],
+        key="card_issuance_date_range"
+    )
+    
+    start_date, end_date = date_range
+    filtered_cards = cards[(cards['IssuedDate'].dt.date >= start_date) & (cards['IssuedDate'].dt.date <= end_date)]
+    
+    # تجميع البيانات حسب الشهر والنوع
+    filtered_cards['IssuedMonth'] = filtered_cards['IssuedDate'].dt.to_period('M').dt.to_timestamp()
+    grouped = filtered_cards.groupby(['IssuedMonth', 'CardType']).size().reset_index(name='Count')
+    
+    # رسم بياني للاتجاهات
     line_chart = alt.Chart(grouped).mark_line(point=True).encode(
-        x='IssuedMonth:T',
-        y='Count:Q',
-        color='CardType:N',
+        x=alt.X('IssuedMonth:T', title='Issuance Month'),
+        y=alt.Y('Count:Q', title='Number of Cards Issued'),
+        color=alt.Color('CardType:N', title='Card Type'),
         tooltip=['IssuedMonth:T', 'CardType:N', 'Count:Q']
     ).properties(
         title='Card Issuance by Type Over Time',
-        width=700,
         height=400
-    )
-
+    ).interactive()
+    
     st.altair_chart(line_chart, use_container_width=True)
-
-
-    cards['ExpirationDate'] = pd.to_datetime(cards['ExpirationDate'], errors='coerce')
-
-
-    today = pd.Timestamp(datetime.date.today())
-
-
+    
+    # تحليل البطاقات النشطة مقابل المنتهية
+    st.subheader("🔄 Active vs Expired Cards")
+    
+    # إضافة حقل الحالة (نشط أو منتهي)
     cards['Status'] = cards['ExpirationDate'].apply(lambda x: 'Active' if x and x > today else 'Expired')
-    cards['IssuedMonth'] = cards['IssuedDate'].dt.to_period('M').dt.to_timestamp()
-    expired_trend = cards[cards['Status'] == 'Expired'].groupby('IssuedMonth').size()
-    active_trend = cards[cards['Status'] == 'Active'].groupby('IssuedMonth').size()
-
-
-    status_counts = cards['Status'].value_counts()
-    fig = px.pie(
-    names=status_counts.index,
-    values=status_counts.values,
-    title="Active vs Expired Cards",
-    color_discrete_sequence=["green", "red"]
-    )
-    st.plotly_chart(fig)
-
+    
+    # بيانات الحالة مع النسب المئوية
+    status_counts = cards['Status'].value_counts().reset_index()
+    status_counts.columns = ['Status', 'Count']
+    status_counts['Percentage'] = (status_counts['Count'] / status_counts['Count'].sum() * 100).round(1)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        fig = px.pie(
+            status_counts,
+            names='Status',
+            values='Count',
+            title="Active vs Expired Cards",
+            color='Status',
+            color_discrete_map={'Active': 'green', 'Expired': 'red'},
+            hole=0.5
+        )
+        fig.update_traces(textinfo='percent+label')
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        # تحليل حالة البطاقة حسب النوع
+        card_status_by_type = cards.groupby(['CardType', 'Status']).size().reset_index(name='Count')
+        
+        fig = px.bar(
+            card_status_by_type,
+            x='CardType',
+            y='Count',
+            color='Status',
+            title='Card Status by Type',
+            barmode='group',
+            color_discrete_map={'Active': 'green', 'Expired': 'red'}
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # متوسط عدد البطاقات لكل عميل حسب النوع
+    st.subheader("👥 Customer Card Ownership Analysis")
+    
     customer_card_counts = cards.groupby(['CustomerID', 'CardType']).size().reset_index(name='CardCount')
-
-
     avg_holding_per_type = customer_card_counts.groupby('CardType')['CardCount'].mean().round(2)
-
-   
-    st.subheader("📊 Average Cards Held per Customer by Card Type")
-    st.dataframe(avg_holding_per_type.rename("AvgCardsPerCustomer"))
+    
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.dataframe(avg_holding_per_type.rename("AvgCardsPerCustomer"))
+    
+    with col2:
+        fig = px.bar(
+            avg_holding_per_type.reset_index(),
+            x='CardType',
+            y='CardCount',
+            title='Average Cards per Customer by Type',
+            color='CardCount',
+            text='CardCount',
+            color_continuous_scale=px.colors.sequential.Blues
+        )
+        fig.update_traces(texttemplate='%{text:.2f}', textposition='outside')
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # تحليل مدة صلاحية البطاقات
+    st.subheader("⏱️ Card Lifecycle Analysis")
+    
+    # حساب المدة المتبقية للبطاقات النشطة
+    active_cards_df = cards[cards['Status'] == 'Active'].copy()
+    active_cards_df['DaysToExpiration'] = (active_cards_df['ExpirationDate'] - today).dt.days
+    
+    # تقسيم المدة المتبقية إلى فئات
+    active_cards_df['ExpirationBucket'] = pd.cut(
+        active_cards_df['DaysToExpiration'],
+        bins=[0, 30, 90, 180, 365, float('inf')],
+        labels=['< 30 days', '30-90 days', '90-180 days', '180-365 days', '> 365 days']
+    )
+    
+    expiration_counts = active_cards_df['ExpirationBucket'].value_counts().reset_index()
+    expiration_counts.columns = ['Time to Expiration', 'Count']
+    
+    fig = px.bar(
+        expiration_counts.sort_values('Time to Expiration'),
+        x='Time to Expiration',
+        y='Count',
+        title='Time to Expiration for Active Cards',
+        color='Count',
+        color_continuous_scale=px.colors.sequential.Viridis
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # تحليل متقدم: توزيع البطاقات حسب العميل
+    st.subheader("🔍 Card Distribution Among Customers")
+    
+    cards_per_customer_counts = cards.groupby('CustomerID').size()
+    card_distribution = cards_per_customer_counts.value_counts().reset_index()
+    card_distribution.columns = ['Cards per Customer', 'Number of Customers']
+    
+    fig = px.bar(
+        card_distribution,
+        x='Cards per Customer',
+        y='Number of Customers',
+        title='Distribution of Cards Among Customers',
+        text='Number of Customers',
+        color='Number of Customers',
+        color_continuous_scale=px.colors.sequential.Blues
+    )
+    fig.update_traces(texttemplate='%{text}', textposition='outside')
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # نظرة عامة على البطاقات المنتهية مؤخراً
+    st.subheader("🚨 Recently Expired Cards")
+    
+    # تعريف "مؤخراً" كآخر 30 يوماً
+    thirty_days_ago = today - pd.DateOffset(days=30)
+    recently_expired = cards[(cards['ExpirationDate'] <= today) & 
+                            (cards['ExpirationDate'] >= thirty_days_ago)]
+    
+    if not recently_expired.empty:
+        st.write(f"**{recently_expired.shape[0]} cards expired in the last 30 days**")
+        
+        # عرض توزيع البطاقات المنتهية مؤخراً حسب النوع
+        recent_expired_by_type = recently_expired['CardType'].value_counts().reset_index()
+        recent_expired_by_type.columns = ['Card Type', 'Count']
+        
+        fig = px.pie(
+            recent_expired_by_type,
+            names='Card Type',
+            values='Count',
+            title='Recently Expired Cards by Type',
+            color_discrete_sequence=px.colors.qualitative.Pastel
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No cards have expired in the last 30 days.")
+    
+    # ملخص الرؤى
+    st.subheader("💡 Key Insights")
+    
+    # حساب بعض المقاييس الإضافية
+    most_common_type = card_type_counts.iloc[0]['Card Type']
+    most_common_count = card_type_counts.iloc[0]['Count']
+    most_common_pct = (most_common_count / total_cards) * 100
+    
+    # اعرض الرؤى استناداً إلى البيانات
+    st.markdown(f"""
+    - **{most_common_type}** is the most common card type, representing **{most_common_pct:.1f}%** of all cards.
+    - On average, customers hold **{cards_per_customer:.2f}** cards.
+    - **{expiring_soon}** cards are expiring within the next 90 days, requiring renewal outreach.
+    - **{status_counts[status_counts['Status'] == 'Active']['Percentage'].values[0] if 'Active' in status_counts['Status'].values else 0}%** of cards are currently active.
+    """)
 
 with tab6:
-    st.header("📞 Support Calls")
+    st.header("📞 Support Calls Analytics")
 
-    col1, col2 = st.columns(2)
+    # Data preparation
+    calls['CallDate'] = pd.to_datetime(calls['CallDate'], errors='coerce')
+    calls['Month'] = calls['CallDate'].dt.month
+    calls['Year'] = calls['CallDate'].dt.year
+    calls['DayOfWeek'] = calls['CallDate'].dt.day_name()
+    calls['Hour'] = calls['CallDate'].dt.hour
+    
+    # Add quarter for seasonal analysis
+    calls['Quarter'] = calls['CallDate'].dt.quarter
+    calls['QuarterLabel'] = calls['Quarter'].apply(lambda x: f"Q{x}")
+    
+    # Calculate call duration (if available)
+    if 'CallDuration' in calls.columns:
+        calls['CallDurationMinutes'] = calls['CallDuration'] / 60
+    
+    # Key Performance Indicators section
+    st.subheader("📊 Key Performance Indicators")
+    
+    total_calls = calls['CallID'].nunique()
+    resolved_calls = calls[calls['Resolved'].str.lower() == 'yes'].shape[0]
+    unresolved_calls = total_calls - resolved_calls
+    resolution_rate = (resolved_calls / total_calls) * 100 if total_calls > 0 else 0
+    
+    # First row of metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
     with col1:
-        total_calls = calls['CallID'].nunique()
-        resolved_calls = calls[calls['Resolved'].str.lower() == 'yes'].shape[0]
-        unresolved_calls = total_calls - resolved_calls
-
-        st.markdown(f"""
-            <div style="text-align:center">
-                <h3>Total Calls</h3>
-                <p style="font-size:50px; font-weight:bold;">{total_calls}</p>
-            </div>
-        """, unsafe_allow_html=True)
-
-        st.markdown(f"""
-            <div style="text-align:center">
-                <h3>Resolved Calls</h3>
-                <p style="font-size:50px; font-weight:bold; color:green;">{resolved_calls}</p>
-            </div>
-        """, unsafe_allow_html=True)
-
-        st.markdown(f"""
-            <div style="text-align:center">
-                <h3>Unresolved Calls</h3>
-                <p style="font-size:50px; font-weight:bold; color:red;">{unresolved_calls}</p>
-            </div>
-        """, unsafe_allow_html=True)
-
+        st.metric(
+            "Total Calls",
+            f"{total_calls:,}",
+        )
+    
     with col2:
-        st.subheader("Resolved vs Unresolved Calls")
+        st.metric(
+            "Resolved Calls",
+            f"{resolved_calls:,}",
+            f"{resolved_calls/total_calls:.1%}" if total_calls > 0 else "N/A"
+        )
+    
+    with col3:
+        st.metric(
+            "Unresolved Calls",
+            f"{unresolved_calls:,}",
+            f"{unresolved_calls/total_calls:.1%}" if total_calls > 0 else "N/A"
+        )
+    
+    with col4:
+        st.metric(
+            "Resolution Rate",
+            f"{resolution_rate:.1f}%",
+            "Target: 95%"
+        )
+    
+    # Date range filter
+    st.subheader("📅 Date Range Filter")
+    
+    # Get min and max dates for the filter
+    min_date = calls['CallDate'].min().date() if not calls['CallDate'].isnull().all() else pd.Timestamp.today().date()
+    max_date = calls['CallDate'].max().date() if not calls['CallDate'].isnull().all() else pd.Timestamp.today().date()
+    
+    # Create date range filter
+    date_range = st.date_input(
+        "Select Date Range",
+        [min_date, max_date],
+        min_value=min_date,
+        max_value=max_date
+    )
+    
+    if len(date_range) == 2:
+        start_date, end_date = date_range
+        filtered_calls = calls[(calls['CallDate'].dt.date >= start_date) & 
+                               (calls['CallDate'].dt.date <= end_date)]
+        
+        st.write(f"Analyzing {filtered_calls.shape[0]} calls from {start_date} to {end_date}")
+    else:
+        filtered_calls = calls
+        st.write(f"Analyzing all {calls.shape[0]} calls")
+    
+    # Call Resolution Analysis
+    st.subheader("🎯 Call Resolution Analysis")
+    
+    col1, col2 = st.columns([2, 3])
+    
+    with col1:
         resolution_data = pd.DataFrame({
             'Resolution': ['Resolved', 'Unresolved'],
-            'Count': [resolved_calls, unresolved_calls]
+            'Count': [
+                filtered_calls[filtered_calls['Resolved'].str.lower() == 'yes'].shape[0],
+                filtered_calls[filtered_calls['Resolved'].str.lower() != 'yes'].shape[0]
+            ]
         })
+        
         fig = px.pie(
             resolution_data,
             names='Resolution',
@@ -1225,39 +1609,336 @@ with tab6:
             title='Call Resolution Rate',
             hole=0.4
         )
+        fig.update_traces(textinfo='percent+label')
         st.plotly_chart(fig, use_container_width=True)
-
     
-    calls['CallDate'] = pd.to_datetime(calls['CallDate'], errors='coerce')
-    st.bar_chart(calls['IssueType'].value_counts())
-    call_by_date = calls.groupby(calls['CallDate'].dt.date).size()
-    st.subheader("Calls Over Time")
-    st.line_chart(call_by_date)
+    with col2:
+        # Resolution by issue type
+        resolution_by_issue = filtered_calls.groupby(['IssueType', 'Resolved']).size().reset_index(name='Count')
+        
+        # Filter to ensure we only include issue types with both resolved and unresolved cases
+        issue_types_with_both = resolution_by_issue.groupby('IssueType').filter(lambda x: len(x) > 1)
+        
+        if not issue_types_with_both.empty:
+            fig = px.bar(
+                issue_types_with_both,
+                x='IssueType',
+                y='Count',
+                color='Resolved',
+                title='Resolution by Issue Type',
+                barmode='group',
+                color_discrete_map={'yes':'green', 'no':'red', 'Yes':'green', 'No':'red'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Not enough data to show resolution by issue type.")
+    
+        # Call volume by day of week
+    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    calls_by_day = filtered_calls['DayOfWeek'].value_counts().reindex(day_order).reset_index()
+    calls_by_day.columns = ['Day of Week', 'Number of Calls']
+    
+    fig = px.bar(
+        calls_by_day,
+        x='Day of Week',
+        y='Number of Calls',
+        title='Call Volume by Day of Week',
+        color='Number of Calls',
+        color_continuous_scale=px.colors.sequential.Reds
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    
+    st.subheader("📈 Call Volume Analysis")
+    
+    # Prepare data for call volume by date
+    call_volume_by_date = filtered_calls.groupby(filtered_calls['CallDate'].dt.date).size().reset_index()
+    call_volume_by_date.columns = ['Date', 'Number of Calls']
+    
+    # Call volume by date line chart
+    fig = px.line(
+        call_volume_by_date,
+        x='Date',
+        y='Number of Calls',
+        title='Daily Call Volume',
+        markers=True
+    )
+    fig.update_layout(xaxis_title="Date", yaxis_title="Number of Calls")
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Issue Type Analysis
+    st.subheader("🔍 Issue Type Analysis")
+    
+    issue_counts = filtered_calls['IssueType'].value_counts().reset_index()
+    issue_counts.columns = ['Issue Type', 'Number of Calls']
+    
+    # Top issues by volume
+    fig = px.bar(
+        issue_counts.head(10),
+        x='Issue Type',
+        y='Number of Calls',
+        title='Top Issue Types by Volume',
+        color='Number of Calls',
+        color_continuous_scale=px.colors.sequential.Reds
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    
+    
+        
+        # Call frequency by customer
+    call_frequency = filtered_calls.groupby('CustomerID').size().reset_index()
+    call_frequency.columns = ['CustomerID', 'Number of Calls']
+    
+    # Generate histogram of call frequency
+    fig = px.histogram(
+        call_frequency,
+        x='Number of Calls',
+        nbins=5,
+        title='Distribution of Calls per Customer',
+        color_discrete_sequence=['#FF4B4B']
+    )
+    fig.update_layout(bargap=0.1)
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Identify top customers by call volume
+    top_callers = call_frequency.sort_values('Number of Calls', ascending=False).head(10)
+    
+    st.subheader("Top 10 Customers by Call Volume")
+    
+    # Check available columns in customers dataframe before merging
+    available_columns = ['CustomerID']
+    customer_columns_to_show = ['CustomerID', 'Number of Calls']
+    
+    # Add optional columns if they exist in the customers dataframe
+    if 'State' in customers.columns:
+        available_columns.append('State')
+        customer_columns_to_show.append('State')
+        
+    # Check for name column with various possible names
+    name_column = None
+    for possible_name in ['Name', 'CustomerName', 'FullName', 'Customer_Name']:
+        if possible_name in customers.columns:
+            name_column = possible_name
+            available_columns.append(name_column)
+            customer_columns_to_show.insert(1, name_column)  # Insert name after CustomerID
+            break
+            
+    # Merge with only available columns
+    top_callers_with_info = top_callers.merge(customers[available_columns], on='CustomerID', how='left')
+    
+    # Display the dataframe with appropriate columns
+    st.dataframe(top_callers_with_info[customer_columns_to_show])
+    
+    # Call Duration Analysis (if available)
+    if 'CallDurationMinutes' in filtered_calls.columns:
+        st.subheader("⏱️ Call Duration Analysis")
+        
+        # Average call duration
+        avg_duration = filtered_calls['CallDurationMinutes'].mean()
+        st.metric("Average Call Duration", f"{avg_duration:.2f} minutes")
+        
+        # Call duration by issue type
+        duration_by_issue = filtered_calls.groupby('IssueType')['CallDurationMinutes'].mean().reset_index()
+        duration_by_issue.columns = ['Issue Type', 'Average Duration (minutes)']
+        duration_by_issue = duration_by_issue.sort_values('Average Duration (minutes)', ascending=False)
+        
+        fig = px.bar(
+            duration_by_issue.head(10),
+            x='Issue Type',
+            y='Average Duration (minutes)',
+            title='Average Call Duration by Issue Type',
+            color='Average Duration (minutes)',
+            color_continuous_scale=px.colors.sequential.Oranges
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # First Call Resolution Analysis
+    if 'FirstCallResolution' in filtered_calls.columns:
+        st.subheader("✅ First Call Resolution (FCR) Analysis")
+        
+        fcr_rate = (filtered_calls['FirstCallResolution'] == 'Yes').mean() * 100
+        st.metric("First Call Resolution Rate", f"{fcr_rate:.1f}%", "Target: 80%")
+        
+        # FCR by issue type
+        fcr_by_issue = filtered_calls.groupby('IssueType')['FirstCallResolution'].apply(
+            lambda x: (x == 'Yes').mean() * 100
+        ).reset_index()
+        fcr_by_issue.columns = ['Issue Type', 'FCR Rate (%)']
+        fcr_by_issue = fcr_by_issue.sort_values('FCR Rate (%)', ascending=False)
+        
+        fig = px.bar(
+            fcr_by_issue,
+            x='Issue Type',
+            y='FCR Rate (%)',
+            title='First Call Resolution Rate by Issue Type',
+            color='FCR Rate (%)',
+            color_continuous_scale=px.colors.sequential.Greens
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Key Insights and Recommendations
+    st.subheader("💡 Key Insights and Recommendations")
+    
+    # Calculate insights
+    busiest_day = calls_by_day.loc[calls_by_day['Number of Calls'].idxmax(), 'Day of Week']
+    top_issue = issue_counts.iloc[0]['Issue Type']
+    top_issue_count = issue_counts.iloc[0]['Number of Calls']
+    top_issue_percentage = (top_issue_count / filtered_calls.shape[0]) * 100
+    
+    insights = [
+        f"**Resolution Rate:** {resolution_rate:.1f}% of calls are successfully resolved.",
+        f"**Busiest Day:** {busiest_day} is the busiest day for support calls.",
+        f"**Top Issue:** '{top_issue}' represents {top_issue_percentage:.1f}% of all support calls.",
+    ]
+    
+    recommendations = [
+        f"**Staffing:** Consider increasing support staff on {busiest_day}s to handle higher call volumes.",
+        f"**Training:** Develop specialized training for handling '{top_issue}' issues to improve resolution rates.",
+        f"**Knowledge Base:** Create comprehensive documentation for common issues to improve first-call resolution."
+    ]
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### Insights")
+        for insight in insights:
+            st.markdown(f"- {insight}")
+    
+    with col2:
+        st.markdown("#### Recommendations")
+        for recommendation in recommendations:
+            st.markdown(f"- {recommendation}")
 
 with tab7:
     st.header("📈 Advanced Insights")
 
+    # High-Value Customers Analysis
+    st.subheader("💰 High-Value Customer Analysis")
     
-    st.subheader("High-Value Customers")
+    # Calculate total balance per customer
     acc_loans = accounts.groupby("CustomerID")["Balance"].sum().reset_index()
     acc_loans.columns = ["CustomerID", "TotalBalance"]
-    high_value = acc_loans[acc_loans["TotalBalance"] > acc_loans["TotalBalance"].quantile(0.75)]
-    st.write(f"Number of High-Value Customers: {len(high_value)}")
-    st.dataframe(high_value.merge(customers, on="CustomerID", how="left"))
-
     
-    st.subheader("Cross-Product Usage")
+    # Identify high-value customers (top 25%)
+    high_value_threshold = acc_loans["TotalBalance"].quantile(0.75)
+    high_value = acc_loans[acc_loans["TotalBalance"] > high_value_threshold]
+    
+    # Display metrics and KPIs
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(
+            "High-Value Customers", 
+            f"{len(high_value):,}",
+            f"{len(high_value)/len(acc_loans):.1%} of total customers"
+        )
+    with col2:
+        avg_high_value_balance = high_value["TotalBalance"].mean()
+        st.metric(
+            "Avg High-Value Balance", 
+            f"${avg_high_value_balance:,.2f}",
+            f"{avg_high_value_balance/acc_loans['TotalBalance'].mean() - 1:.1%} vs overall avg"
+        )
+    with col3:
+        total_high_value_balance = high_value["TotalBalance"].sum()
+        st.metric(
+            "Total High-Value Balance",
+            f"${total_high_value_balance:,.2f}",
+            f"{total_high_value_balance/acc_loans['TotalBalance'].sum():.1%} of total balances"
+        )
+    
+    # High-value customer details
+    with st.expander("View High-Value Customer Details"):
+        high_value_details = high_value.merge(customers, on="CustomerID", how="left")
+        st.dataframe(high_value_details)
+    
+    # Cross-Product Usage Analysis
+    st.subheader("🔄 Cross-Product Usage Analysis")
+    
+    # Prepare data for product usage
     merged = customers.copy()
     merged["HasAccount"] = merged["CustomerID"].isin(accounts["CustomerID"])
     merged["HasCard"] = merged["CustomerID"].isin(cards["CustomerID"])
     merged["HasLoan"] = merged["CustomerID"].isin(loans["CustomerID"])
     merged["HasSupport"] = merged["CustomerID"].isin(calls["CustomerID"])
-    product_usage = merged[["HasAccount", "HasCard", "HasLoan", "HasSupport"]].mean() * 100
-    st.bar_chart(product_usage)
-
     
-    st.subheader("Customer Segmentation by Balance")
-
+    # Calculate product adoption rates
+    product_usage = merged[["HasAccount", "HasCard", "HasLoan", "HasSupport"]].mean() * 100
+    product_usage_df = product_usage.reset_index()
+    product_usage_df.columns = ["Product", "Adoption Rate"]
+    
+    # Map technical names to readable names
+    product_name_map = {
+        "HasAccount": "Banking Account",
+        "HasCard": "Card Services",
+        "HasLoan": "Loan Products",
+        "HasSupport": "Support Services"
+    }
+    product_usage_df["Product"] = product_usage_df["Product"].map(product_name_map)
+    
+    # Create interactive product adoption chart
+    fig = px.bar(
+        product_usage_df,
+        x="Product",
+        y="Adoption Rate",
+        title="Product Adoption Rates (%)",
+        color="Adoption Rate",
+        color_continuous_scale=px.colors.sequential.Blues,
+        text=product_usage_df["Adoption Rate"].round(1).astype(str) + "%"
+    )
+    fig.update_layout(yaxis_title="Adoption Rate (%)", xaxis_title="Product")
+    fig.update_traces(textposition="outside")
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Create product combination matrix
+    st.subheader("Product Combination Analysis")
+    
+    # Generate all combination patterns
+    merged["ProductCombo"] = (
+        (merged["HasAccount"].astype(int) * 1000) + 
+        (merged["HasCard"].astype(int) * 100) + 
+        (merged["HasLoan"].astype(int) * 10) + 
+        (merged["HasSupport"].astype(int))
+    )
+    
+    combo_counts = merged["ProductCombo"].value_counts().reset_index()
+    combo_counts.columns = ["Combo", "Count"]
+    
+    # Only show top combinations
+    top_combos = combo_counts.head(10)
+    
+    # Create human-readable combination descriptions
+    def combo_description(combo_code):
+        combo_str = str(combo_code).zfill(4)
+        products = []
+        if combo_str[0] == "1": products.append("Account")
+        if combo_str[1] == "1": products.append("Card")
+        if combo_str[2] == "1": products.append("Loan")
+        if combo_str[3] == "1": products.append("Support")
+        
+        if not products:
+            return "No Products"
+        return " + ".join(products)
+    
+    top_combos["Description"] = top_combos["Combo"].apply(combo_description)
+    
+    # Create horizontal bar chart for top combinations
+    fig = px.bar(
+        top_combos,
+        y="Description",
+        x="Count",
+        title="Top Product Combinations",
+        color="Count",
+        color_continuous_scale=px.colors.sequential.Blues,
+        orientation='h',
+        text="Count"
+    )
+    fig.update_layout(yaxis_title="", xaxis_title="Number of Customers")
+    fig.update_traces(textposition="outside")
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Customer Segmentation by Balance
+    st.subheader("💎 Customer Value Segmentation")
+    
+    # Define segments
     def categorize_customer(balance):
         if balance >= acc_loans["TotalBalance"].quantile(0.75):
             return "Platinum"
@@ -1265,41 +1946,184 @@ with tab7:
             return "Gold"
         else:
             return "Silver"
-
+    
+    # Apply segmentation
     acc_loans["Segment"] = acc_loans["TotalBalance"].apply(categorize_customer)
     segment_summary = acc_loans["Segment"].value_counts().reset_index()
-    segment_summary.columns = ["Segment", "Count"]
-    st.write("### Segment Distribution")
-    st.bar_chart(segment_summary.set_index("Segment"))
-
-    segmented_customers = acc_loans.merge(customers, on="CustomerID", how="left")
-    st.dataframe(segmented_customers)
-
+    segment_summary.columns = ["Segment", "Customer Count"]
     
-    st.subheader("Customer Segmentation by Behavior")
-
+    # Add segment percentages
+    segment_summary["Percentage"] = (segment_summary["Customer Count"] / segment_summary["Customer Count"].sum() * 100).round(1)
+    
+    # Set color map for segments
+    segment_colors = {"Platinum": "#3366CC", "Gold": "#FFD700", "Silver": "#C0C0C0"}
+    
+    # Create donut chart for segments
+    fig = px.pie(
+        segment_summary,
+        names="Segment",
+        values="Customer Count",
+        title="Customer Segments Distribution",
+        color="Segment",
+        color_discrete_map=segment_colors,
+        hole=0.4,
+    )
+    fig.update_traces(textinfo="percent+label")
+    
+    # Create balance by segment chart
+    segment_balance = acc_loans.groupby("Segment")["TotalBalance"].sum().reset_index()
+    segment_balance["Percentage"] = (segment_balance["TotalBalance"] / segment_balance["TotalBalance"].sum() * 100).round(1)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        fig = px.bar(
+            segment_balance,
+            x="Segment",
+            y="TotalBalance",
+            title="Total Balance by Segment",
+            color="Segment",
+            color_discrete_map=segment_colors,
+            text=segment_balance["Percentage"].astype(str) + "%"
+        )
+        fig.update_layout(yaxis_title="Total Balance ($)", xaxis_title="Segment")
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Segmented customer details
+    with st.expander("View Segmented Customer Details"):
+        segmented_customers = acc_loans.merge(customers, on="CustomerID", how="left")
+        st.dataframe(segmented_customers)
+    
+    # Customer Segmentation by Behavior
+    st.subheader("👥 Behavioral Segmentation Analysis")
+    
+    # Prepare data for clustering
     behavior_data = merged[["HasAccount", "HasCard", "HasLoan", "HasSupport"]].astype(int)
     scaler = StandardScaler()
     scaled_behavior = scaler.fit_transform(behavior_data)
-
+    
+    # Apply K-means clustering
     kmeans = KMeans(n_clusters=3, random_state=42, n_init='auto')
-    merged["BehaviorSegment"] = kmeans.fit_predict(scaled_behavior)
-
+    merged["ClusterID"] = kmeans.fit_predict(scaled_behavior)
+    
+    # Map cluster IDs to meaningful labels
     segment_labels = {
-    0: "Low Engagement",
-    1: "Moderate Engagement",
-    2: "High Engagement"
-}
-
-    merged["BehaviorSegment"] = merged["BehaviorSegment"].map(segment_labels)
-
-    st.write("### Number of Customers per Behavioral Segment")
-    st.bar_chart(merged["BehaviorSegment"].value_counts())
-
-    st.dataframe(merged[["CustomerID", "BehaviorSegment", "HasAccount", "HasCard", "HasLoan", "HasSupport"]])
+        0: "Low Engagement",
+        1: "Moderate Engagement",
+        2: "High Engagement"
+    }
+    
+    merged["BehaviorSegment"] = merged["ClusterID"].map(segment_labels)
+    
+    # Calculate segment statistics
+    behavior_segment_counts = merged["BehaviorSegment"].value_counts().reset_index()
+    behavior_segment_counts.columns = ["Segment", "Customer Count"]
+    behavior_segment_counts["Percentage"] = (behavior_segment_counts["Customer Count"] / behavior_segment_counts["Customer Count"].sum() * 100).round(1)
+    
+    # Segment colors for consistency
+    behavior_colors = {
+        "Low Engagement": "#6EA5E0", 
+        "Moderate Engagement": "#386CB0", 
+        "High Engagement": "#253F70"
+    }
+    
+    # Create interactive segment distribution chart
+    fig = px.pie(
+        behavior_segment_counts,
+        names="Segment",
+        values="Customer Count",
+        title="Behavioral Segments Distribution",
+        color="Segment",
+        color_discrete_map=behavior_colors,
+        hole=0.4
+    )
+    fig.update_traces(textinfo="percent+label")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        # Calculate and display segment characteristics
+        segment_features = merged.groupby("BehaviorSegment")[["HasAccount", "HasCard", "HasLoan", "HasSupport"]].mean().reset_index()
+        
+        # Reshape data for radar chart
+        segment_features_melted = segment_features.melt(
+            id_vars=["BehaviorSegment"],
+            var_name="Feature",
+            value_name="Adoption Rate"
+        )
+        
+        # Map feature names to readable names
+        segment_features_melted["Feature"] = segment_features_melted["Feature"].map(product_name_map)
+        
+        # Create radar chart for segment characteristics
+        fig = px.line_polar(
+            segment_features_melted, 
+            r="Adoption Rate", 
+            theta="Feature", 
+            color="BehaviorSegment",
+            line_close=True,
+            color_discrete_map=behavior_colors,
+            range_r=[0, 1]
+        )
+        fig.update_layout(title="Segment Characteristics")
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Display segment data table
+    with st.expander("View Customer Behavioral Data"):
+        behavior_columns = ["CustomerID", "BehaviorSegment", "HasAccount", "HasCard", "HasLoan", "HasSupport"]
+        st.dataframe(merged[behavior_columns])
+    
+    # Key Insights Summary
+    st.subheader("💡 Key Business Insights")
+    
+    # Calculate key statistics
+    total_customers = len(customers)
+    high_value_pct = len(high_value) / len(acc_loans) * 100
+    multi_product_customers = merged[(merged['HasAccount'] & merged['HasCard']) | 
+                                    (merged['HasAccount'] & merged['HasLoan']) | 
+                                    (merged['HasCard'] & merged['HasLoan'])].shape[0]
+    multi_product_pct = (multi_product_customers / total_customers) * 100
+    
+    # Format insights as cards
+    insights = [
+        {
+            "title": "High-Value Customer Concentration",
+            "description": f"{high_value_pct:.1f}% of customers (top tier) hold {total_high_value_balance/acc_loans['TotalBalance'].sum():.1%} of all balances",
+            "recommendation": "Develop targeted retention strategies for high-value customers with personalized services."
+        },
+        {
+            "title": "Product Adoption Patterns",
+            "description": f"{multi_product_pct:.1f}% of customers use multiple products, while {100-multi_product_pct:.1f}% use only one product",
+            "recommendation": "Create compelling product bundles and cross-selling campaigns to increase product adoption."
+        },
+        {
+            "title": "Segment Optimization",
+            "description": "Significant behavior variation exists within value segments, creating opportunities for targeting",
+            "recommendation": "Implement segment-specific marketing and service strategies based on both value and behavior."
+        }
+    ]
+    
+    # Display insights in columns
+    insight_cols = st.columns(len(insights))
+    
+    for i, col in enumerate(insight_cols):
+        with col:
+            st.markdown(f"""
+            <div style="border:1px solid #ddd; padding:10px; border-radius:5px; height:220px;">
+                <h4>{insights[i]['title']}</h4>
+                <p><strong>Finding:</strong> {insights[i]['description']}</p>
+                <p><strong>Action:</strong> {insights[i]['recommendation']}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
 with tab8:
-    GOOGLE_API_KEY = "AIzaSyCfr_AYlPCQPYToTY2NUDM-4nEFbYNdhVY"
+    # استخدام مفتاح API من Streamlit Secrets
+    GOOGLE_API_KEY = st.secrets["gemini"]["api_key"]
     genai.configure(api_key=GOOGLE_API_KEY)
 
     model = genai.GenerativeModel('gemini-1.5-flash')
