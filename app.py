@@ -104,10 +104,10 @@ transactions.drop(columns=["Unnamed: 0"], inplace=True, errors='ignore')
 
 
 (
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
 ) = st.tabs([
     "Customer Overview", "Accounts", "Transactions", "Loans",
-    "Cards", "Support Calls", "Advanced Insights", "Chat", "Auto Analysis", "Telegram Reports", "Churn Prediction"
+    "Cards", "Support Calls", "Advanced Insights", "Chat", "Auto Analysis", "Telegram Reports", "Churn Prediction", "Fraud Detection", "Power BI Dashboard"
 ])
 
 
@@ -2999,4 +2999,183 @@ with tab11:
             st.write("- Immediate customer outreach")
             st.write("- Develop retention strategy")
             st.write("- Consider special retention offers")
-                    
+
+with tab12:
+    st.header("🔍 Fraud Detection")
+    st.write("""
+    ### Use this tool to detect potentially fraudulent transactions
+    Fill in the transaction details below and click 'Detect Fraud' to analyze the transaction.
+    """)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Customer Information")
+        customer_id = st.text_input("Customer ID", value="C123", key="fraud_customer_id")
+        tenure = st.number_input("Tenure (years)", min_value=0.0, max_value=50.0, value=2.0, key="fraud_tenure")
+        number_of_accounts = st.number_input("Number of Accounts", min_value=1, max_value=10, value=1, key="fraud_accounts")
+        total_balance = st.number_input("Total Balance ($)", min_value=0.0, max_value=1000000.0, value=10000.0, key="fraud_balance")
+        
+    with col2:
+        st.subheader("Transaction Information")
+        recency = st.number_input("Days Since Last Transaction", min_value=0, max_value=365, value=10, key="fraud_recency")
+        frequency = st.number_input("Transaction Frequency (monthly)", min_value=0, max_value=100, value=5, key="fraud_frequency")
+        monetary = st.number_input("Transaction Amount ($)", min_value=0.0, max_value=10000.0, value=500.0, key="fraud_monetary")
+
+    st.subheader("Additional Information")
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        has_active_loan = st.selectbox("Has Active Loan?", ["Yes", "No"], key="fraud_has_loan")
+        number_of_cards = st.number_input("Number of Cards", min_value=0, max_value=10, value=1, key="fraud_cards")
+    
+    with col4:
+        support_calls = st.number_input("Number of Support Calls", min_value=0, max_value=50, value=0, key="fraud_calls")
+        resolution_rate = st.slider("Support Resolution Rate", min_value=0.0, max_value=1.0, value=1.0, key="fraud_resolution")
+
+    # Prepare input data for the model
+    features = {
+        'customerid': customer_id,
+        'tenure': tenure,
+        'number_of_accounts': number_of_accounts,
+        'total_balance': total_balance,
+        'recency': recency,
+        'frequency': frequency,
+        'monetary': monetary,
+        'has_active_loan': 1 if has_active_loan == "Yes" else 0,
+        'number_of_cards': number_of_cards,
+        'support_call_frequency': support_calls,
+        'resolution_rate': resolution_rate
+    }
+
+    # Function to send Telegram fraud alert
+    def send_fraud_alert(customer_data, fraud_probability):
+        try:
+            telegram_token = st.secrets["telegram"]["bot_token"]
+            telegram_chat_id = st.secrets["telegram"]["chat_id"]
+            
+            # Create alert message
+            alert_message = f"""🚨 *FRAUD ALERT* 🚨
+            
+Suspicious transaction detected!
+
+*Customer ID:* {customer_data['customerid']}
+*Transaction Amount:* ${customer_data['monetary']:.2f}
+*Fraud Probability:* {fraud_probability:.1%}
+
+*Transaction Details:*
+- Customer Tenure: {customer_data['tenure']} years
+- Account Balance: ${customer_data['total_balance']:.2f}
+- Recent Activity: {customer_data['recency']} days since last transaction
+
+⚠️ This transaction has been flagged for review.
+Time: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+            """
+            
+            url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+            payload = {
+                "chat_id": telegram_chat_id,
+                "text": alert_message,
+                "parse_mode": "Markdown"
+            }
+            
+            response = requests.post(url, data=payload)
+            return response.status_code == 200
+            
+        except Exception as e:
+            st.error(f"Error sending alert: {e}")
+            return False
+
+    if st.button("🔍 Detect Fraud", key="detect_fraud_button"):
+        # Use the same ML model from the churn prediction
+        model = load_ml_model()
+        
+        input_df = pd.DataFrame([features])
+        
+        # For fraud detection, we're considering the same model but interpreting differently
+        # In a real implementation, you should use a dedicated fraud detection model
+        fraud_probability = model.predict_proba(input_df)[0][1]  # Using the same model for demonstration
+        
+        st.subheader("Fraud Analysis Results")
+        
+        # Set thresholds for fraud detection
+        if fraud_probability < 0.5:
+            color = "green"
+            risk_level = "Low Risk"
+            is_fraud = False
+        elif fraud_probability < 0.5:
+            color = "orange"
+            risk_level = "Medium Risk"
+            is_fraud = False
+        else:
+            color = "red"
+            risk_level = "High Risk - Potential Fraud"
+            is_fraud = True
+            
+        # Display the result
+        st.markdown(f"""
+        <div style="padding: 20px; border-radius: 10px; background-color: {color}25;">
+            <h3 style="color: {color};">{risk_level}</h3>
+            <h2 style="color: {color};">{fraud_probability:.1%}</h2>
+            <p>Probability of Fraudulent Transaction</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Send alert if fraud is detected
+        if is_fraud:
+            with st.spinner("Sending fraud alert..."):
+                if send_fraud_alert(features, fraud_probability):
+                    st.success("✅ Fraud alert sent to security team via Telegram")
+                else:
+                    st.error("❌ Failed to send fraud alert. Please check Telegram settings.")
+        
+        # Provide analysis and recommendations
+        st.subheader("Risk Analysis")
+        if is_fraud:
+            st.write("🚨 This transaction has been flagged as potentially fraudulent.")
+            st.write("Recommended Actions:")
+            st.write("- Put hold on the transaction")
+            st.write("- Contact the customer immediately to verify")
+            st.write("- Review recent account activity")
+            st.write("- Escalate to fraud investigation team")
+        elif fraud_probability < 0.3:
+            st.write("✅ This transaction appears to be legitimate.")
+            st.write("Recommended Actions:")
+            st.write("- Process the transaction normally")
+            st.write("- No additional verification needed")
+        else:
+            st.write("⚠️ This transaction has some suspicious characteristics.")
+            st.write("Recommended Actions:")
+            st.write("- Apply additional verification steps")
+            st.write("- Consider requesting customer confirmation")
+            st.write("- Monitor account for further suspicious activity")
+
+with tab13:
+    st.header("📊 Power BI Dashboard")
+    
+    st.markdown("""
+    ### Interactive Power BI Banking Analytics
+    
+    Explore our comprehensive Power BI dashboard for in-depth banking analytics and visualizations.
+    The dashboard provides interactive reports and KPIs for better decision making.
+    """)
+    
+    power_bi_url = "https://app.powerbi.com/groups/e47897bc-cb38-4424-9c6d-2eb3cf5df9dd/reports/79ea3ff5-9a42-4ab8-ba28-324facc5a1d8?ctid=f349c2fd-fc94-4893-abe4-cfbe7ed52842&pbi_source=linkShare"
+    
+    st.components.v1.iframe(power_bi_url, width=1100, height=600)
+    
+    st.markdown("""
+    #### Dashboard Features:
+    - Customer acquisition and retention metrics
+    - Financial performance indicators
+    - Transaction patterns and trends
+    - Geographic distribution analysis
+    - Product performance analytics
+    - Risk assessment visualizations
+    
+    Use the interactive controls in the Power BI report to filter and drill down into specific data points.
+    """)
+    
+    # Provide direct link as backup
+    st.markdown(f"[Open Power BI Dashboard in new window]({power_bi_url})")
+    
