@@ -3160,7 +3160,7 @@ with tab13:
     The dashboard provides interactive reports and KPIs for better decision making.
     """)
     
-    power_bi_url = "https://app.powerbi.com/groups/e47897bc-cb38-4424-9c6d-2eb3cf5df9dd/reports/79ea3ff5-9a42-4ab8-ba28-324facc5a1d8?ctid=f349c2fd-fc94-4893-abe4-cfbe7ed52842&pbi_source=linkShare"
+    power_bi_url = "https://app.powerbi.com/groups/e47897bc-cb38-4424-9c6d-2eb3cf5df9dd/reports/247930fd-6b10-4e4b-85eb-892a3d073a00/b335e0101b80e6640656?experience=power-bi"
     
     st.components.v1.iframe(power_bi_url, width=1100, height=600)
     
