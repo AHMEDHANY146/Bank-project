@@ -36,14 +36,14 @@ def load_data():
     # Load customer and transaction tables from CSV files - using GitHub or data folder
     try:
         # Try to load from data directory (for deployment)
-        customers = pd.read_csv("Banking_Analytics_Dataset_Updated2.csv")
-        transactions = pd.read_csv("Banking_Analytics_Transactions_Updated.csv")
-        fraud_df = pd.read_csv("Banking_Analytics_Transactions_WithFraud.csv")
+        customers = pd.read_csv("csv/Banking_Analytics_Dataset_Updated2.csv")
+        transactions = pd.read_csv("csv/Banking_Analytics_Transactions_Updated.csv")
+        fraud_df = pd.read_csv("csv/Banking_Analytics_Transactions_WithFraud.csv")
     except FileNotFoundError:
         # Fallback to original local paths for development
-        customers = pd.read_csv(r"Banking_Analytics_Dataset_Updated2.csv")
-        transactions = pd.read_csv(r"Banking_Analytics_Transactions_Updated.csv")
-        fraud_df = pd.read_csv(r"Banking_Analytics_Transactions_WithFraud.csv")
+        customers = pd.read_csv(r"csv/Banking_Analytics_Dataset_Updated2.csv")
+        transactions = pd.read_csv(r"csv/Banking_Analytics_Transactions_Updated.csv")
+        fraud_df = pd.read_csv(r"csv/Banking_Analytics_Transactions_WithFraud.csv")
     
     # Configure Azure SQL database connection using secrets
     sql_server_fqdn = st.secrets["sql_credentials"]["server"]
@@ -83,10 +83,10 @@ def load_data():
         st.warning("Using backup CSV files for all tables...")
         
         # Use CSV files as backup if database connection fails
-        accounts = pd.read_csv(r"Banking_Analytics_Dataset.xlsx - Accounts.csv")
-        cards = pd.read_csv(r"Banking_Analytics_Dataset.xlsx - Cards.csv")
-        loans = pd.read_csv(r"Banking_Analytics_Dataset.xlsx - Loans.csv")
-        calls = pd.read_csv(r"Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
+        accounts = pd.read_csv(r"csv/Banking_Analytics_Dataset.xlsx - Accounts.csv")
+        cards = pd.read_csv(r"csv/Banking_Analytics_Dataset.xlsx - Cards.csv")
+        loans = pd.read_csv(r"csv/Banking_Analytics_Dataset.xlsx - Loans.csv")
+        calls = pd.read_csv(r"csv/Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
     
     return customers, accounts, cards, loans, calls, transactions, fraud_df
 
