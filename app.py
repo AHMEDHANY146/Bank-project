@@ -18,6 +18,9 @@ import threading
 import time
 import joblib  
 import pyodbc
+import pandas as pd
+
+
 
 st.set_page_config(
     page_title="Banking Analytics Dashboard",
@@ -99,12 +102,14 @@ customers.drop(columns=["Unnamed: 0"], inplace=True, errors='ignore')
 transactions.drop(columns=["Unnamed: 0"], inplace=True, errors='ignore')
 
 
+
 (
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
 ) = st.tabs([
     "Customer Overview", "Accounts", "Transactions", "Loans",
     "Cards", "Support Calls", "Advanced Insights", "Chat", "Auto Analysis", "Telegram Reports", "Churn Prediction", "Fraud Detection", "Power BI Dashboard"
 ])
+
 
 with tab1:
     st.header("\U0001F465 Customer Overview")
@@ -168,6 +173,9 @@ with tab1:
     
     fig.update_layout(height=400)
     st.plotly_chart(fig, use_container_width=True)
+
+
+
 
     
     merged_txn_accounts = transactions.merge(accounts[['AccountID', 'CustomerID']], on='AccountID', how='left')
@@ -259,9 +267,19 @@ with tab1:
     
     st.pydeck_chart(deck)
 
+
+
+
+
+
+
+
+
     join_by_month.index = join_by_month.index.to_timestamp()
     join_by_month_df = join_by_month.reset_index()
     join_by_month_df.columns = ['JoinMonth', 'Count']
+
+
 
     valid_date_customers = all_customers.dropna(subset=['JoinDate'])
     
@@ -450,7 +468,7 @@ with tab2:
 
     with col2:
       
-        average_balance_per_customer = accounts.groupby('CustomerID')['Balance'].mean().mean()  
+        average_balance_per_customer = accounts.groupby('CustomerID')['Balance'].mean().mean()  # حساب المتوسط العام
         st.metric("Average Balance per Customer", f"${average_balance_per_customer:,.2f}")
 
     with col3:
@@ -489,6 +507,8 @@ with tab2:
         fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
         fig.update_layout(uniformtext_minsize=8, uniformtext_mode='hide')
         st.plotly_chart(fig, use_container_width=True)
+
+
 
     dominant_account_type = account_type_counts.iloc[0]['AccountType']
     dominant_account_percentage = (account_type_counts.iloc[0]['Count'] / account_type_counts['Count'].sum()) * 100
@@ -1124,6 +1144,7 @@ with tab4:
 
     st.plotly_chart(fig)
 
+
     st.subheader("Loan Types")
     loan_counts = loans['LoanType'].value_counts().reset_index()
     loan_counts.columns = ['Loan Type', 'Count']
@@ -1149,7 +1170,7 @@ with tab4:
     loans['InterestRate'] = loans['InterestRate'].str.replace(',', '.', regex=False)
     loans['InterestRate'] = pd.to_numeric(loans['InterestRate'], errors='coerce')
 
-    
+    # ✅ No need to drop values over 100, just ensure they're read correctly
 
     # Define the weighted average function
     def calculate_weighted_average_interest(df, amount_col='LoanAmount', rate_col='InterestRate'):
@@ -1162,6 +1183,7 @@ with tab4:
     # Calculate and display
     weighted_avg_rate = calculate_weighted_average_interest(loans)
     st.metric("Weighted Average Interest Rate", f"{weighted_avg_rate:.2f}%")
+
 
     # Average interest by loan type
     avg_interest_by_type = loans.groupby('LoanType')['InterestRate'].mean().reset_index()
@@ -1201,7 +1223,9 @@ with tab4:
     )
     st.plotly_chart(fig, use_container_width=True)
 
+
     current_year = datetime.datetime.now().year
+
 
     loans['LoanEndDate'] = pd.to_datetime(loans['LoanEndDate'], errors='coerce')
 
@@ -1234,7 +1258,7 @@ with tab4:
 with tab5:
     st.header("💳 Cards Overview")
     
-    
+    # إحصائيات رئيسية
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -1249,7 +1273,7 @@ with tab5:
         cards['ExpirationDate'] = pd.to_datetime(cards['ExpirationDate'], errors='coerce')
         today = pd.Timestamp(datetime.date.today())
         
-        
+        # البطاقات التي ستنتهي خلال 90 يوم
         expiring_soon = cards[(cards['ExpirationDate'] > today) & 
                              (cards['ExpirationDate'] <= today + pd.DateOffset(days=90))].shape[0]
         st.metric("Expiring in 90 Days", expiring_soon)
@@ -1259,7 +1283,7 @@ with tab5:
         active_percentage = (active_cards / total_cards) * 100 if total_cards > 0 else 0
         st.metric("Active Cards", f"{active_percentage:.1f}%")
     
-    
+    # تحليل أنواع البطاقات
     st.subheader("📊 Card Type Analysis")
     
     card_type_counts = cards['CardType'].value_counts().reset_index()
@@ -1291,12 +1315,12 @@ with tab5:
         fig.update_traces(texttemplate='%{text}', textposition='outside')
         st.plotly_chart(fig, use_container_width=True)
     
-    
+    # تحليل إصدار البطاقات عبر الزمن
     st.subheader("📈 Card Issuance Trends")
     
     cards['IssuedDate'] = pd.to_datetime(cards['IssuedDate'], errors='coerce')
     
-    
+    # فلتر لاختيار النطاق الزمني
     date_range = st.date_input(
         "Select Date Range",
         [cards['IssuedDate'].min().date(), cards['IssuedDate'].max().date()],
@@ -1306,11 +1330,11 @@ with tab5:
     start_date, end_date = date_range
     filtered_cards = cards[(cards['IssuedDate'].dt.date >= start_date) & (cards['IssuedDate'].dt.date <= end_date)]
     
-    
+    # تجميع البيانات حسب الشهر والنوع
     filtered_cards['IssuedMonth'] = filtered_cards['IssuedDate'].dt.to_period('M').dt.to_timestamp()
     grouped = filtered_cards.groupby(['IssuedMonth', 'CardType']).size().reset_index(name='Count')
     
-    
+    # رسم بياني للاتجاهات
     line_chart = alt.Chart(grouped).mark_line(point=True).encode(
         x=alt.X('IssuedMonth:T', title='Issuance Month'),
         y=alt.Y('Count:Q', title='Number of Cards Issued'),
@@ -1323,13 +1347,13 @@ with tab5:
     
     st.altair_chart(line_chart, use_container_width=True)
     
-    
+    # تحليل البطاقات النشطة مقابل المنتهية
     st.subheader("🔄 Active vs Expired Cards")
     
-    
+    # إضافة حقل الحالة (نشط أو منتهي)
     cards['Status'] = cards['ExpirationDate'].apply(lambda x: 'Active' if x and x > today else 'Expired')
     
-    
+    # بيانات الحالة مع النسب المئوية
     status_counts = cards['Status'].value_counts().reset_index()
     status_counts.columns = ['Status', 'Count']
     status_counts['Percentage'] = (status_counts['Count'] / status_counts['Count'].sum() * 100).round(1)
@@ -1350,7 +1374,7 @@ with tab5:
         st.plotly_chart(fig, use_container_width=True)
     
     with col2:
-        
+        # تحليل حالة البطاقة حسب النوع
         card_status_by_type = cards.groupby(['CardType', 'Status']).size().reset_index(name='Count')
         
         fig = px.bar(
@@ -1364,7 +1388,7 @@ with tab5:
         )
         st.plotly_chart(fig, use_container_width=True)
     
-    
+    # متوسط عدد البطاقات لكل عميل حسب النوع
     st.subheader("👥 Customer Card Ownership Analysis")
     
     customer_card_counts = cards.groupby(['CustomerID', 'CardType']).size().reset_index(name='CardCount')
@@ -1388,14 +1412,14 @@ with tab5:
         fig.update_traces(texttemplate='%{text:.2f}', textposition='outside')
         st.plotly_chart(fig, use_container_width=True)
     
-    
+    # تحليل مدة صلاحية البطاقات
     st.subheader("⏱️ Card Lifecycle Analysis")
     
-    
+    # حساب المدة المتبقية للبطاقات النشطة
     active_cards_df = cards[cards['Status'] == 'Active'].copy()
     active_cards_df['DaysToExpiration'] = (active_cards_df['ExpirationDate'] - today).dt.days
     
-    
+    # تقسيم المدة المتبقية إلى فئات
     active_cards_df['ExpirationBucket'] = pd.cut(
         active_cards_df['DaysToExpiration'],
         bins=[0, 30, 90, 180, 365, float('inf')],
@@ -1415,7 +1439,7 @@ with tab5:
     )
     st.plotly_chart(fig, use_container_width=True)
     
-    
+    # تحليل متقدم: توزيع البطاقات حسب العميل
     st.subheader("🔍 Card Distribution Among Customers")
     
     cards_per_customer_counts = cards.groupby('CustomerID').size()
@@ -1434,10 +1458,10 @@ with tab5:
     fig.update_traces(texttemplate='%{text}', textposition='outside')
     st.plotly_chart(fig, use_container_width=True)
     
-    
+    # نظرة عامة على البطاقات المنتهية مؤخراً
     st.subheader("🚨 Recently Expired Cards")
     
-    
+    # تعريف "مؤخراً" كآخر 30 يوماً
     thirty_days_ago = today - pd.DateOffset(days=30)
     recently_expired = cards[(cards['ExpirationDate'] <= today) & 
                             (cards['ExpirationDate'] >= thirty_days_ago)]
@@ -1445,7 +1469,7 @@ with tab5:
     if not recently_expired.empty:
         st.write(f"**{recently_expired.shape[0]} cards expired in the last 30 days**")
         
-        
+        # عرض توزيع البطاقات المنتهية مؤخراً حسب النوع
         recent_expired_by_type = recently_expired['CardType'].value_counts().reset_index()
         recent_expired_by_type.columns = ['Card Type', 'Count']
         
@@ -1460,15 +1484,15 @@ with tab5:
     else:
         st.info("No cards have expired in the last 30 days.")
     
-    
+    # ملخص الرؤى
     st.subheader("💡 Key Insights")
     
-    
+    # حساب بعض المقاييس الإضافية
     most_common_type = card_type_counts.iloc[0]['Card Type']
     most_common_count = card_type_counts.iloc[0]['Count']
     most_common_pct = (most_common_count / total_cards) * 100
     
-    
+    # اعرض الرؤى استناداً إلى البيانات
     st.markdown(f"""
     - **{most_common_type}** is the most common card type, representing **{most_common_pct:.1f}%** of all cards.
     - On average, customers hold **{cards_per_customer:.2f}** cards.
@@ -2093,7 +2117,7 @@ with tab7:
             """, unsafe_allow_html=True)
 
 with tab8:
-    
+    # استخدام مفتاح API من Streamlit Secrets
     GOOGLE_API_KEY = st.secrets["gemini"]["api_key"]
     genai.configure(api_key=GOOGLE_API_KEY)
 
