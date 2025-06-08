@@ -27,19 +27,20 @@ st.set_page_config(
 
 st.title("\U0001F4CA Banking Analytics Dashboard")
 
+
 @st.cache_data
 def load_data():
     # Load customer and transaction tables from CSV files - using GitHub or data folder
     try:
         # Try to load from data directory (for deployment)
-        customers = pd.read_csv("data/Banking_Analytics_Dataset_Updated2.csv")
-        transactions = pd.read_csv("data/Banking_Analytics_Transactions_Updated.csv")
-        fraud_df = pd.read_csv("data/Banking_Analytics_Transactions_WithFraud.csv")
+        customers = pd.read_csv("csv/Banking_Analytics_Dataset_Updated2.csv")
+        transactions = pd.read_csv("csv/Banking_Analytics_Transactions_Updated.csv")
+        fraud_df = pd.read_csv("csv/Banking_Analytics_Transactions_WithFraud.csv")
     except FileNotFoundError:
         # Fallback to original local paths for development
-        customers = pd.read_csv(r"D:\\Bootcampproj\\Banking_Analytics_Dataset_Updated2.csv")
-        transactions = pd.read_csv(r"D:\\Bootcampproj\\Banking_Analytics_Transactions_Updated.csv")
-        fraud_df = pd.read_csv(r"D:\\Bootcampproj\\Banking_Analytics_Transactions_WithFraud.csv")
+        customers = pd.read_csv(r"csv/Banking_Analytics_Dataset_Updated2.csv")
+        transactions = pd.read_csv(r"csv/Banking_Analytics_Transactions_Updated.csv")
+        fraud_df = pd.read_csv(r"csv/Banking_Analytics_Transactions_WithFraud.csv")
     
     # Configure Azure SQL database connection using secrets
     sql_server_fqdn = st.secrets["sql_credentials"]["server"]
@@ -63,7 +64,7 @@ def load_data():
         # Create database connection
         conn = pyodbc.connect(connection_string)
         
-        
+        # Read remaining tables from Azure SQL database
         accounts = pd.read_sql("SELECT * FROM Accounts", conn)
         cards = pd.read_sql("SELECT * FROM Cards", conn)
         loans = pd.read_sql("SELECT * FROM Loans", conn)
@@ -79,23 +80,23 @@ def load_data():
         st.warning("Using backup CSV files for all tables...")
         
         # Use CSV files as backup if database connection fails
-        accounts = pd.read_csv(r"D:\\Bootcampproj\\Banking_Analytics_Dataset.xlsx - Accounts.csv")
-        cards = pd.read_csv(r"D:\\Bootcampproj\\Banking_Analytics_Dataset.xlsx - Cards.csv")
-        loans = pd.read_csv(r"D:\\Bootcampproj\\Banking_Analytics_Dataset.xlsx - Loans.csv")
-        calls = pd.read_csv(r"D:\\Bootcampproj\\Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
+        accounts = pd.read_csv(r"csv/Banking_Analytics_Dataset.xlsx - Accounts.csv")
+        cards = pd.read_csv(r"csv/Banking_Analytics_Dataset.xlsx - Cards.csv")
+        loans = pd.read_csv(r"csv/Banking_Analytics_Dataset.xlsx - Loans.csv")
+        calls = pd.read_csv(r"csv/Banking_Analytics_Dataset.xlsx - SupportCalls.csv")
     
     return customers, accounts, cards, loans, calls, transactions, fraud_df
 
+
 @st.cache_resource
 def load_ml_model():
-    model = joblib.load(r'D:\Bootcampproj\ML\best_rf_churn_model (1).pkl')
+    model = joblib.load(r'best_rf_churn_model (1).pkl')
     return model
 
 customers, accounts, cards, loans, calls, transactions, fraud_df = load_data()
 
 customers.drop(columns=["Unnamed: 0"], inplace=True, errors='ignore')
 transactions.drop(columns=["Unnamed: 0"], inplace=True, errors='ignore')
-
 (
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
 ) = st.tabs([
