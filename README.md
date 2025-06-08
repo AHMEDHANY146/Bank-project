@@ -72,8 +72,8 @@ banking-analytics-dashboard/
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/AHMDHANY146/Bank-project
-cd banking-analytics-dashboard
+git clone https://github.com/AHMEDHANY146/Bank-project
+cd Bank-project
 ```
 
 ### 2. Create a virtual environment and install requirements
