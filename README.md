@@ -72,7 +72,7 @@ banking-analytics-dashboard/
 
 ### 1. Clone the repository
 ```bash
-git clone [https://github.com/username/banking-analytics-dashboard.git](https://github.com/AHMEDHANY146/Bank-project)
+git clone https://github.com/AHMDHANY146/Bank-project
 cd banking-analytics-dashboard
 ```
 
