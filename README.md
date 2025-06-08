@@ -1,83 +1,144 @@
 
-📊 Banking Analytics Dashboard
+# 📊 Banking Analytics Dashboard
 
-Overview
---------
-An interactive dashboard built with Streamlit for comprehensive banking analytics. This app visualizes customer data, accounts, transactions, loans, cards, fraud detection, churn risk, and support call insights. It integrates with an Azure SQL database and falls back to CSV files if the connection fails.
+## Overview
 
-Key Features
-------------
-- 🧍 Customer Overview: Activity analysis, churn detection, geographic distribution.
-- 🏦 Account Insights: Account types, balances, dormant accounts.
-- 💸 Transactions: Seasonal trends, daily heatmaps, fraud identification.
-- 🚨 Fraud Detection: Visual and model-based detection.
-- 📈 Loans: Types, interest rates, upcoming maturities.
-- 💳 Cards: Types, issuance trends, lifecycle tracking.
-- 📞 Support Calls: Resolution rates, issue types, customer service analysis.
-- 🧠 Advanced Insights: High-value customers, product adoption.
-- 🔮 Churn Prediction: Machine learning model integration.
-- ☁️ Azure SQL integration with local fallback.
+An interactive, multi-tab dashboard built using **Streamlit** for end-to-end banking analytics.  
+The system visualizes and analyzes customer data, accounts, cards, transactions, loans, fraud, churn, and support calls.
 
-Project Structure
------------------
-project-root/
+It supports dynamic integration with **Azure SQL Database** and falls back gracefully to local CSV files if needed.
+
+---
+
+## 🚀 Key Features
+
+- **🧍 Customer Overview**  
+  Track total/active/inactive customers, join trends, churn risk categories, state distributions.
+
+- **🏦 Account Insights**  
+  Monitor balances, account types, activity levels, and dormant capital concentration.
+
+- **💸 Transactions Dashboard**  
+  Analyze transaction types, seasonal/monthly/daily trends, and high-risk behaviors.
+
+- **🚨 Fraud Detection**  
+  Detect fraud using outlier detection and visualize trends by time, location, and transaction type.
+
+- **📈 Loans Analysis**  
+  View distribution by loan types, interest rate trends, maturities, and upcoming expirations.
+
+- **💳 Card Analytics**  
+  Evaluate card types, lifecycle status, issuance trends, active/expired distributions.
+
+- **📞 Support Calls**  
+  Assess resolution rate, call volume, peak periods, average duration, and top complaint types.
+
+- **🧠 Advanced Insights**  
+  Segment high-value customers, measure product adoption, and uncover growth opportunities.
+
+- **🔮 Churn Prediction**  
+  Uses a Random Forest model to classify customers at risk of churn.
+
+- **☁️ Azure SQL Support**  
+  Automatically connects to Azure SQL and handles fallback using local data when offline.
+
+---
+
+## 🗂️ Project Structure
+
+```
+banking-analytics-dashboard/
 │
-├── app.py                  # Main Streamlit application
-├── csv/                    # Fallback datasets in CSV
-├── best_rf_churn_model.pkl # Pre-trained churn prediction model
-├── requirements.txt        # Dependencies
-├── README.txt              # This documentation
+├── app.py                    # Streamlit application entry point
+│
+├── csv/                      # Fallback dataset folder
+│   ├── Banking_Analytics_Dataset_Updated2.csv
+│   ├── Banking_Analytics_Transactions_Updated.csv
+│   └── ...                   # Other backup CSVs (Accounts, Loans, etc.)
+│
+├── best_rf_churn_model.pkl   # Pre-trained churn prediction model using Random Forest
+│
+├── requirements.txt          # Python dependencies for setting up the environment
+│
+├── README.md                 # Project documentation (this file)
+│
 └── .streamlit/
-    └── secrets.toml        # Azure SQL credentials (DO NOT upload)
+    └── secrets.toml          # Azure SQL credentials (DO NOT upload this file)
+```
 
-Setup Instructions
-------------------
-1. Clone the repository:
-    git clone https://github.com/username/banking-analytics-dashboard.git
-    cd banking-analytics-dashboard
+---
 
-2. Create a virtual environment and install dependencies:
-    python -m venv venv
-    source venv/bin/activate  # Or venv\Scripts\activate on Windows
-    pip install -r requirements.txt
+## ⚙️ Setup Instructions
 
-3. Configure Azure SQL connection:
-    Create .streamlit/secrets.toml with the following:
+### 1. Clone the repository
+```bash
+git clone https://github.com/username/banking-analytics-dashboard.git
+cd banking-analytics-dashboard
+```
 
-    [sql_credentials]
-    server = "your_server.database.windows.net"
-    database = "your_database"
-    username = "your_user"
-    password = "your_password"
+### 2. Create a virtual environment and install requirements
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-4. Run the app:
-    streamlit run app.py
+### 3. Configure Azure SQL credentials
+Create a file: `.streamlit/secrets.toml` and paste your connection info:
+```toml
+[sql_credentials]
+server = "your_server.database.windows.net"
+database = "your_database"
+username = "your_user"
+password = "your_password"
+```
 
-Technologies Used
------------------
-- Streamlit
-- Pandas, Plotly, Altair
-- PyDeck (for maps)
-- Scikit-learn + Joblib (ML model)
-- YData Profiling
-- Azure SQL + pyodbc
+### 4. Run the application
+```bash
+streamlit run app.py
+```
 
-Security Note
--------------
-Be sure to exclude secrets.toml and .pkl model files from GitHub. Use a .gitignore like:
+---
 
-    .streamlit/secrets.toml
-    *.pkl
-    __pycache__/
+## 🧠 Technologies Used
 
-Future Ideas
-------------
-- Authentication layer
-- Executive summary tab
-- Telegram Bot integration
-- Power BI dashboard embedding
-- Arabic language support
+| Tool                  | Purpose                             |
+|-----------------------|-------------------------------------|
+| Streamlit             | Interactive UI framework            |
+| Pandas, Plotly, Altair| Data manipulation & visualization   |
+| PyDeck                | Geo maps & state-level insights     |
+| Scikit-learn + Joblib | ML churn model                      |
+| Azure SQL + pyodbc    | External database integration       |
+| ydata-profiling       | Automated data profiling            |
 
-Author
-------
-Built by Ahmed Hany.
+---
+
+## 🔐 Security Notice
+
+Do **NOT** upload sensitive credentials or model files to GitHub.
+
+Include the following in `.gitignore`:
+```
+.streamlit/secrets.toml
+*.pkl
+__pycache__/
+```
+
+---
+
+## 💡 Future Enhancements
+
+- Authentication & Role-based access
+- Power BI report integration
+- Executive dashboards
+- Arabic language UI
+- Automated Telegram bot reporting
+
+---
+
+## 👨‍💻 Author
+
+**Developed by:** [Ahmed Hany]  
+Pull requests and contributions are welcome!
+
+---
