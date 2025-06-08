@@ -72,7 +72,7 @@ banking-analytics-dashboard/
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/username/banking-analytics-dashboard.git
+git clone [https://github.com/username/banking-analytics-dashboard.git](https://github.com/AHMEDHANY146/Bank-project)
 cd banking-analytics-dashboard
 ```
 
@@ -138,7 +138,7 @@ __pycache__/
 
 ## 👨‍💻 Author
 
-**Developed by:** [Ahmed Hany]  
+**Developed by:** Ahmed Hany  
 Pull requests and contributions are welcome!
 
 ---
